@@ -523,7 +523,40 @@ extension ${Self} {
 }
 % end
 
-extension ${Self} {
+// Construction of integers from floating point numbers.
+%   for srcBits in allFloatBits:
+%     Src = floatName[srcBits]
+%     (lower, upper) = getFtoIBounds(srcBits, int(bits), signed)
+
+%     if srcBits == 80:
+#if !os(Windows) && (arch(i386) || arch(x86_64))
+%     end
+
+  /// Creates a ${Self} whose value is `value` rounded towards zero.
+  @_transparent
+  public init(_ value: ${Src}) {
+    _precondition(value.isFinite,
+      "${Src} value cannot be converted to ${Self} because it is either infinite or NaN")
+    _precondition(value > ${str(lower)}.0,
+      "${Src} value cannot be converted to ${Self} because the result would be less than ${Self}.min")
+    _precondition(value < ${str(upper)}.0,
+      "${Src} value cannot be converted to ${Self} because the result would be greater than ${Self}.max")
+    self._value = Builtin.fpto${sign}i_FPIEEE${srcBits}_${BuiltinName}(value._value)
+  }
+
+  /// Creates a ${Self} whose value is `value` if no rounding is necessary, nil otherwise.
+  @_transparent
+  public init?(exactly value: ${Src}) {
+    if value.isFinite == false || value < ${str(lower)}.0 || value > ${str(upper)}.0 {
+      return nil
+    }
+    self._value = Builtin.fpto${sign}i_FPIEEE${srcBits}_${BuiltinName}(value._value)
+  }
+%     if srcBits == 80:
+#endif
+%     end
+%   end
+
   /// Construct a `${Self}` having the same memory representation as
   /// the `${OtherSelf}` `bitPattern`.  No range or overflow checking
   /// occurs, and the resulting `${Self}` may not have the same numeric
