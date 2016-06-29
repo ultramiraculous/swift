@@ -1718,7 +1718,7 @@ diagnoseMatch(TypeChecker &tc, Module *module,
     fixDeclarationName(diag, match.Witness, req->getFullName());
 
     // Also fix the Objective-C name, if needed.
-    if (req->isObjC())
+    if (!match.Witness->canInferObjCFromRequirement(req))
       fixDeclarationObjCName(diag, match.Witness, req->getObjCRuntimeName());
     break;
   }
@@ -1733,11 +1733,14 @@ diagnoseMatch(TypeChecker &tc, Module *module,
     // about them.
     break;
 
-  case MatchKind::TypeConflict:
-    tc.diagnose(match.Witness, diag::protocol_witness_type_conflict,
-                getTypeForDisplay(tc, module, match.Witness),
-                withAssocTypes);
+  case MatchKind::TypeConflict: {
+    auto diag = tc.diagnose(match.Witness, diag::protocol_witness_type_conflict,
+                            getTypeForDisplay(tc, module, match.Witness),
+                            withAssocTypes);
+    if (!isa<TypeDecl>(req))
+      fixItOverrideDeclarationTypes(tc, diag, match.Witness, req);
     break;
+  }
 
   case MatchKind::ThrowsConflict:
     tc.diagnose(match.Witness, diag::protocol_witness_throws_conflict);
@@ -3653,6 +3656,7 @@ void ConformanceChecker::checkConformance() {
 
       // Objective-C checking for @objc requirements.
       if (requirement->isObjC() &&
+          requirement->getFullName() == witness->getFullName() &&
           !requirement->getAttrs().isUnavailable(TC.Context)) {
         // The witness must also be @objc.
         if (!witness->isObjC()) {
@@ -3665,9 +3669,11 @@ void ConformanceChecker::checkConformance() {
                                                : diag::witness_non_objc,
                                     diagInfo.first, diagInfo.second,
                                     Proto->getFullName());
-            fixDeclarationObjCName(
-              diag, witness,
-              cast<AbstractFunctionDecl>(requirement)->getObjCSelector());
+            if (!witness->canInferObjCFromRequirement(requirement)) {
+              fixDeclarationObjCName(
+                diag, witness,
+                cast<AbstractFunctionDecl>(requirement)->getObjCSelector());
+            }
           } else if (isa<VarDecl>(witness)) {
             auto diag = TC.diagnose(witness,
                                     isOptional
@@ -3676,10 +3682,13 @@ void ConformanceChecker::checkConformance() {
                                     /*isSubscript=*/false,
                                     witness->getFullName(),
                                     Proto->getFullName());
-            fixDeclarationObjCName(
-               diag, witness,
-               ObjCSelector(requirement->getASTContext(), 0,
-                            cast<VarDecl>(requirement)->getObjCPropertyName()));
+            if (!witness->canInferObjCFromRequirement(requirement)) {
+              fixDeclarationObjCName(
+                 diag, witness,
+                 ObjCSelector(requirement->getASTContext(), 0,
+                              cast<VarDecl>(requirement)
+                                ->getObjCPropertyName()));
+            }
           } else if (isa<SubscriptDecl>(witness)) {
             TC.diagnose(witness,
                         isOptional
@@ -4412,7 +4421,8 @@ static void diagnosePotentialWitness(TypeChecker &tc,
     // Special case: note to add @objc.
     auto diag = tc.diagnose(witness,
                             diag::optional_req_nonobjc_near_match_add_objc);
-    fixDeclarationObjCName(diag, witness, req->getObjCRuntimeName());
+    if (!witness->canInferObjCFromRequirement(req))
+      fixDeclarationObjCName(diag, witness, req->getObjCRuntimeName());
   } else {
     diagnoseMatch(tc, conformance->getDeclContext()->getParentModule(),
                   conformance, req, match);

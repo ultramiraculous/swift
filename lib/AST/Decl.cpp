@@ -283,18 +283,17 @@ llvm::raw_ostream &swift::operator<<(llvm::raw_ostream &OS,
   llvm_unreachable("bad StaticSpellingKind");
 }
 
-DeclContext *Decl::getInnermostDeclContext() {
+DeclContext *Decl::getInnermostDeclContext() const {
   if (auto func = dyn_cast<AbstractFunctionDecl>(this))
-    return func;
+    return const_cast<AbstractFunctionDecl*>(func);
   if (auto nominal = dyn_cast<NominalTypeDecl>(this))
-    return nominal;
+    return const_cast<NominalTypeDecl*>(nominal);
   if (auto ext = dyn_cast<ExtensionDecl>(this))
-    return ext;
+    return const_cast<ExtensionDecl*>(ext);
   if (auto topLevel = dyn_cast<TopLevelCodeDecl>(this))
-    return topLevel;
+    return const_cast<TopLevelCodeDecl*>(topLevel);
 
   return getDeclContext();
-
 }
 
 DeclContext *Decl::getDeclContextForModule() const {
@@ -424,6 +423,9 @@ bool Decl::isPrivateStdlibDecl(bool whitelistProtocols) const {
   auto hasInternalParameter = [](const ParameterList *params) -> bool {
     for (auto param : *params) {
       if (param->hasName() && param->getNameStr().startswith("_"))
+        return true;
+      auto argName = param->getArgumentName();
+      if (!argName.empty() && argName.str().startswith("_"))
         return true;
     }
     return false;
@@ -1736,6 +1738,42 @@ Optional<ObjCSelector> ValueDecl::getObjCRuntimeName() const {
   return None;
 }
 
+bool ValueDecl::canInferObjCFromRequirement(ValueDecl *requirement) {
+  // Only makes sense for a requirement of an @objc protocol.
+  auto proto = cast<ProtocolDecl>(requirement->getDeclContext());
+  if (!proto->isObjC()) return false;
+
+  // Only makes sense when this declaration is within a nominal type
+  // or extension thereof.
+  auto nominal =
+    getDeclContext()->getAsNominalTypeOrNominalTypeExtensionContext();
+  if (!nominal) return false;
+
+  // If there is already an @objc attribute with an explicit name, we
+  // can't infer a name (it's already there).
+  if (auto objcAttr = getAttrs().getAttribute<ObjCAttr>()) {
+    if (!objcAttr->isNameImplicit()) return false;
+  }
+
+  // If the nominal type doesn't conform to the protocol at all, we
+  // cannot infer @objc no matter what we do.
+  SmallVector<ProtocolConformance *, 1> conformances;
+  if (!nominal->lookupConformance(getModuleContext(), proto, conformances))
+    return false;
+
+  // If any of the conformances is attributed to the context in which
+  // this declaration resides, we can infer @objc or the Objective-C
+  // name.
+  auto dc = getDeclContext();
+  for (auto conformance : conformances) {
+    if (conformance->getDeclContext() == dc)
+      return true;
+  }
+
+  // Nothing to infer from.
+  return false;
+}
+
 SourceLoc ValueDecl::getAttributeInsertionLoc(bool forModifier) const {
   if (auto var = dyn_cast<VarDecl>(this)) {
     if (auto pbd = var->getParentPatternBinding()) {
@@ -2298,7 +2336,7 @@ static StringRef mangleObjCRuntimeName(const NominalTypeDecl *nominal,
 
     NominalTypeDecl *NTD = const_cast<NominalTypeDecl*>(nominal);
     if (isa<ClassDecl>(nominal)) {
-      mangler.mangleNominalType(NTD, Mangle::Mangler::BindGenerics::None);
+      mangler.mangleNominalType(NTD);
     } else {
       mangler.mangleProtocolDecl(cast<ProtocolDecl>(NTD));
     }
@@ -3333,13 +3371,14 @@ SourceRange VarDecl::getTypeSourceRangeForDiagnostics() const {
   
   Pattern *Pat = getParentPattern();
   if (!Pat || Pat->isImplicit())
-    return getSourceRange();
+    return SourceRange();
 
   if (auto *VP = dyn_cast<VarPattern>(Pat))
     Pat = VP->getSubPattern();
   if (auto *TP = dyn_cast<TypedPattern>(Pat))
     return TP->getTypeLoc().getTypeRepr()->getSourceRange();
-  return getSourceRange();
+
+  return SourceRange();
 }
 
 static bool isVarInPattern(const VarDecl *VD, Pattern *P) {
@@ -4561,11 +4600,18 @@ ConstructorDecl::getDelegatingOrChainedInitKind(DiagnosticEngine *diags,
       return false;
     }
 
+    bool walkToDeclPre(class Decl *D) override {
+      // Don't walk into further nominal decls.
+      if (isa<NominalTypeDecl>(D))
+        return false;
+      return true;
+    }
+    
     std::pair<bool, Expr*> walkToExprPre(Expr *E) override {
       // Don't walk into closures.
       if (isa<ClosureExpr>(E))
         return { false, E };
-
+      
       // Look for calls of a constructor on self or super.
       auto apply = dyn_cast<ApplyExpr>(E);
       if (!apply)
@@ -4637,7 +4683,7 @@ ConstructorDecl::getDelegatingOrChainedInitKind(DiagnosticEngine *diags,
   if (Kind == BodyInitKind::None && getAttrs().hasAttribute<ConvenienceAttr>())
     Kind = BodyInitKind::Delegating;
 
-  // If wes till don't know, check whether we have a class with a superclass: it
+  // If we still don't know, check whether we have a class with a superclass: it
   // gets an implicit chained initializer.
   if (Kind == BodyInitKind::None) {
     if (auto classDecl = getDeclContext()->getAsClassOrClassExtensionContext()) {

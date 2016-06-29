@@ -3,6 +3,58 @@ Note: This is in reverse chronological order, so newer entries are added to the 
 Swift 3.0
 ---------
 
+* Nested generic functions may now capture bindings from the environment, for example:
+
+    ```swift
+    func outer<T>(t: T) -> T {
+      func inner<U>(u: U) -> (T, U) {
+        return (t, u)
+      }
+      return inner(u: (t, t)).0
+    }
+    ```
+
+* Initializers are now inherited even if the base class or derived class is generic:
+
+    ```swift
+    class Base<T> {
+      let t: T
+
+      init(t: T) {
+        self.t = t
+      }
+    }
+
+    class Derived<T> : Base<T> {
+      // init(t: T) is now synthesized to call super.init(t: t)
+    }```
+
+* [SE-0081](https://github.com/apple/swift-evolution/blob/master/proposals/0081-move-where-expression.md)
+  "Move 'where' clause to end of declaration" is implemented, allowing you to 
+  write 'where' clauses after the signature for a declaration, but before its
+  body.  For example, before:
+
+    ```swift
+    func anyCommonElements<T : SequenceType, U : SequenceType 
+                           where T.Generator.Element: Equatable, T.Generator.Element == U.Generator.Element>
+        (lhs: T, _ rhs: U) -> Bool
+    {
+        ...
+    }
+    ```
+
+  after:
+
+    ```swift
+    func anyCommonElements<T : SequenceType, U : SequenceType>(lhs: T, _ rhs: U) -> Bool
+        where T.Generator.Element: Equatable, T.Generator.Element == U.Generator.Element
+    {
+        ...
+    }
+    ```
+   
+  The old form is still accepted for compatibility, but will eventually be rejected.
+
 * [SE-0071](https://github.com/apple/swift-evolution/blob/master/proposals/0071-member-keywords.md):
   "Allow (most) keywords in member references" is implemented.  This allows the
   use of members after a dot without backticks, e.g. "foo.default".
@@ -184,7 +236,7 @@ Swift 3.0
 * Generic signatures can now contain superclass requirements with generic
   parameter types, for example:
 
-  ```
+  ```swift
   func f<Food : Chunks<Meat>, Meat : Molerat>(f: Food, m: Meat) {}
   ```
 

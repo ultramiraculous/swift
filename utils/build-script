@@ -16,8 +16,6 @@ import multiprocessing
 import os
 import pipes
 import platform
-import re
-import shlex
 import sys
 
 # FIXME: Instead of modifying the system path in order to enable imports from
@@ -30,16 +28,15 @@ from SwiftBuildSupport import (
     HOME,
     SWIFT_BUILD_ROOT,
     SWIFT_SOURCE_ROOT,
-    check_call,
     get_all_preset_names,
     get_preset_options,
-    print_with_argv0,
-    quote_shell_command,
 )  # noqa (E402 module level import not at top of file)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'swift_build_support'))
 
 # E402 means module level import not at top of file
+from swift_build_support import arguments  # noqa (E402)
+from swift_build_support import diagnostics  # noqa (E402)
 from swift_build_support.toolchain import host_toolchain  # noqa (E402)
 import swift_build_support.debug      # noqa (E402)
 from swift_build_support import migration  # noqa (E402)
@@ -47,53 +44,25 @@ from swift_build_support import products  # noqa (E402)
 from swift_build_support import shell  # noqa (E402)
 import swift_build_support.tar        # noqa (E402)
 import swift_build_support.targets    # noqa (E402)
+from swift_build_support.targets import StdlibDeploymentTarget  # noqa (E402)
 from swift_build_support.cmake import CMake  # noqa (E402)
 from swift_build_support.workspace import Workspace  # noqa(E402)
 from swift_build_support.workspace import compute_build_subdir  # noqa(E402)
 
 
-# A strict parser for bools (unlike Python's `bool()`, where
-# `bool('False')` is `True`).
-#
-# This function can be passed as `type=` argument to argparse to parse values
-# passed to command line arguments.
-def argparse_bool(string):
-    if string in ['0', 'false', 'False']:
-        return False
-    if string in ['1', 'true', 'True']:
-        return True
-    raise argparse.ArgumentTypeError("%r is not a boolean value" % string)
+def call_without_sleeping(command, dry_run=False):
+    """
+    Execute a command during which system sleep is disabled.
 
+    By default, this ignores the state of the `shell.dry_run` flag.
+    """
 
-# Parse and split shell arguments string into a list of shell arguments.
-# Recognize `,` as a separator as well as white spaces.
-# string: -BAR="foo bar" -BAZ='foo,bar',-QUX 42
-# into
-# ['-BAR=foo bar', '-BAZ=foo,bar', "-QUX", "42"]
-def argparse_shell_split(string):
-    lex = shlex.shlex(string, posix=True)
-    lex.whitespace_split = True
-    lex.whitespace += ','
-    return list(lex)
+    # Disable system sleep, if possible.
+    if platform.system() == 'Darwin':
+        # Don't mutate the caller's copy of the arguments.
+        command = ["caffeinate"] + list(command)
 
-
-# Parse version string and split into a tuple of strings (major, minor, patch)
-# Support only "MAJOR.MINOR.PATCH" format.
-def argparse_clang_compiler_version(string):
-    m = re.match(r'([0-9]*)\.([0-9]*)\.([0-9]*)', string)
-    if m is not None:
-        return m.group(1, 2, 3)
-    raise argparse.ArgumentTypeError(
-        "%r is invalid version value. must be 'MAJOR.MINOR.PATCH'" % string)
-
-
-# Check the string is executable path string.
-# Convert it to absolute path.
-def argparse_executable(string):
-    if os.access(string, os.X_OK):
-        return os.path.abspath(string)
-    raise argparse.ArgumentTypeError(
-        "%r is not executable" % string)
+    shell.call(command, dry_run=dry_run, echo=False)
 
 
 # Main entry point for the preset mode.
@@ -101,6 +70,12 @@ def main_preset():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="""Builds Swift using a preset.""")
+    parser.add_argument(
+        "-n", "--dry-run",
+        help="print the commands that would be executed, but do not execute "
+             "them",
+        action="store_true",
+        default=False)
     parser.add_argument(
         "--preset-file",
         help="load presets from the specified file",
@@ -141,8 +116,7 @@ def main_preset():
         return 0
 
     if not args.preset:
-        print_with_argv0("Missing --preset option")
-        return 1
+        diagnostics.fatal("missing --preset option")
 
     args.preset_substitutions = {}
 
@@ -154,15 +128,17 @@ def main_preset():
         args.preset_substitutions, args.preset_file_names, args.preset)
 
     build_script_args = [sys.argv[0]]
+    if args.dry_run:
+        build_script_args += ["--dry-run"]
     build_script_args += preset_args
     if args.distcc:
         build_script_args += ["--distcc"]
 
-    print_with_argv0(
+    diagnostics.note(
         "using preset '" + args.preset + "', which expands to \n\n" +
-        quote_shell_command(build_script_args) + "\n")
+        shell.quote_command(build_script_args) + "\n")
 
-    check_call(build_script_args, disable_sleep=True)
+    call_without_sleeping(build_script_args)
 
     return 0
 
@@ -171,6 +147,10 @@ def main_preset():
 def main_normal():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        usage="""
+  %(prog)s [-h | --help] [OPTION ...]
+  %(prog)s --preset=NAME [SUBSTITUTION ...]
+""",
         description="""
 Use this tool to build, test, and prepare binary distribution archives of Swift
 and related tools.
@@ -346,6 +326,13 @@ It is a policy decision aimed at making the builds uniform across all
 environments and easily reproducible by engineers who are not familiar with the
 details of the setups of other systems or automated environments.""")
 
+    parser.add_argument(
+        "-n", "--dry-run",
+        help="print the commands that would be executed, but do not execute "
+             "them",
+        action="store_true",
+        default=False)
+
     targets_group = parser.add_argument_group(
         title="Host and cross-compilation targets")
     targets_group.add_argument(
@@ -353,13 +340,13 @@ details of the setups of other systems or automated environments.""")
         help="The host target. LLVM, Clang, and Swift will be built for this "
              "target. The built LLVM and Clang will be used to compile Swift "
              "for the cross-compilation targets.",
-        default=swift_build_support.targets.host_target())
+        default=StdlibDeploymentTarget.host_target())
     targets_group.add_argument(
         "--stdlib-deployment-targets",
         help="list of targets to compile or cross-compile the Swift standard "
              "library for. %(default)s by default.",
         nargs="*",
-        default=swift_build_support.targets.stdlib_deployment_targets())
+        default=StdlibDeploymentTarget.default_stdlib_deployment_targets())
 
     projects_group = parser.add_argument_group(
         title="Options to select projects")
@@ -591,7 +578,7 @@ details of the setups of other systems or automated environments.""")
         help="test Swift after building",
         metavar="BOOL",
         nargs='?',
-        type=argparse_bool,
+        type=arguments.type.bool,
         default=False,
         const=True)
     run_tests_group.add_argument(
@@ -605,7 +592,7 @@ details of the setups of other systems or automated environments.""")
         help="run the validation test suite (implies --test)",
         metavar="BOOL",
         nargs='?',
-        type=argparse_bool,
+        type=arguments.type.bool,
         default=False,
         const=True)
     run_tests_group.add_argument(
@@ -619,7 +606,7 @@ details of the setups of other systems or automated environments.""")
         help="run the test suite in optimized mode too (implies --test)",
         metavar="BOOL",
         nargs='?',
-        type=argparse_bool,
+        type=arguments.type.bool,
         default=False,
         const=True)
     run_tests_group.add_argument(
@@ -627,7 +614,7 @@ details of the setups of other systems or automated environments.""")
         help="run the long test suite",
         metavar="BOOL",
         nargs='?',
-        type=argparse_bool,
+        type=arguments.type.bool,
         default=False,
         const=True)
     run_tests_group.add_argument(
@@ -860,7 +847,7 @@ details of the setups of other systems or automated environments.""")
         "--cmake",
         help="the path to a CMake executable that will be used to build "
              "Swift",
-        type=argparse_executable,
+        type=arguments.type.executable,
         metavar="PATH")
     parser.add_argument(
         "--show-sdks",
@@ -916,13 +903,13 @@ details of the setups of other systems or automated environments.""")
         "--host-cc",
         help="the absolute path to CC, the 'clang' compiler for the host "
              "platform. Default is auto detected.",
-        type=argparse_executable,
+        type=arguments.type.executable,
         metavar="PATH")
     parser.add_argument(
         "--host-cxx",
         help="the absolute path to CXX, the 'clang++' compiler for the host "
              "platform. Default is auto detected.",
-        type=argparse_executable,
+        type=arguments.type.executable,
         metavar="PATH")
     parser.add_argument(
         "--distcc",
@@ -939,7 +926,7 @@ details of the setups of other systems or automated environments.""")
     parser.add_argument(
         "--clang-compiler-version",
         help="string that indicates a compiler version for Clang",
-        type=argparse_clang_compiler_version,
+        type=arguments.type.clang_compiler_version,
         metavar="MAJOR.MINOR.PATCH")
 
     parser.add_argument(
@@ -968,8 +955,8 @@ details of the setups of other systems or automated environments.""")
         help="Pass through extra options to CMake in the form of comma "
              "separated options '-DCMAKE_VAR1=YES,-DCMAKE_VAR2=/tmp'. Can be "
              "called multiple times to add multiple such options.",
-        action="append",
-        type=argparse_shell_split,
+        action=arguments.action.concat,
+        type=arguments.type.shell_split,
         default=[])
 
     parser.add_argument(
@@ -977,7 +964,7 @@ details of the setups of other systems or automated environments.""")
         help="arguments to the build tool. This would be prepended to the "
              "default argument that is '-j8' when CMake generator is "
              "\"Ninja\".",
-        type=argparse_shell_split,
+        type=arguments.type.shell_split,
         default=[])
 
     parser.add_argument(
@@ -985,9 +972,16 @@ details of the setups of other systems or automated environments.""")
         help="print the commands executed during the build",
         metavar="BOOL",
         nargs='?',
-        type=argparse_bool,
+        type=arguments.type.bool,
         default=False,
         const=True)
+
+    parser.add_argument(
+        # Explicitly unavailable options here.
+        "--build-jobs",
+        "--common-cmake-options",
+        "--only-execute",
+        action=arguments.action.unavailable)
 
     args = migration.parse_args(parser, sys.argv[1:])
 
@@ -1008,6 +1002,8 @@ details of the setups of other systems or automated environments.""")
         if '--check-args-only' in args.build_script_impl_args:
             return 0
 
+    shell.dry_run = args.dry_run
+
     # Prepare and validate toolchain
     toolchain = host_toolchain(xcrun_toolchain=args.darwin_xcrun_toolchain)
 
@@ -1019,27 +1015,22 @@ details of the setups of other systems or automated environments.""")
         toolchain.cmake = args.cmake
 
     if toolchain.cc is None or toolchain.cxx is None:
-        print_with_argv0(
-            "Can't find clang. Please install clang-3.5 or a later version.")
-        return 1
+        diagnostics.fatal(
+            "can't find clang (please install clang-3.5 or a later version)")
 
     if toolchain.cmake is None:
-        print_with_argv0("Can't find CMake. Please install CMake.")
-        return 1
+        diagnostics.fatal("can't find CMake (please install CMake)")
 
     if args.distcc:
         if toolchain.distcc is None:
-            print_with_argv0(
-                "Can't find distcc. Please install distcc")
-            return 1
+            diagnostics.fatal(
+                "can't find distcc (please install distcc)")
         if toolchain.distcc_pump is None:
-            print_with_argv0(
-                "Can't find distcc-pump. Please install distcc-pump")
-            return 1
+            diagnostics.fatal(
+                "can't find distcc-pump (please install distcc-pump)")
 
     if args.host_target is None or args.stdlib_deployment_targets is None:
-        print_with_argv0("Unknown operating system.")
-        return 1
+        diagnostics.fatal("unknown operating system")
 
     if args.symbols_package:
         if not os.path.isabs(args.symbols_package):
@@ -1048,10 +1039,9 @@ details of the setups of other systems or automated environments.""")
                 '(was \'{}\')'.format(args.symbols_package))
             return 1
         if not args.install_symroot:
-            print_with_argv0(
+            diagnostics.fatal(
                 "--install-symroot is required when specifying "
                 "--symbols-package.")
-            return 1
 
     if args.android:
         if args.android_ndk is None or \
@@ -1060,12 +1050,11 @@ details of the setups of other systems or automated environments.""")
                 args.android_icu_uc_include is None or \
                 args.android_icu_i18n is None or \
                 args.android_icu_i18n_include is None:
-            print_with_argv0("When building for Android, --android-ndk, "
-                             "--android-ndk-version, --android-icu-uc, "
-                             "--android-icu-uc-include, --android-icu-i18n, "
-                             "and --android-icu-i18n-include must be "
-                             "specified.")
-            return 1
+            diagnostics.fatal("when building for Android, --android-ndk, "
+                              "--android-ndk-version, --android-icu-uc, "
+                              "--android-icu-uc-include, --android-icu-i18n, "
+                              "and --android-icu-i18n-include must be "
+                              "specified")
 
     # Build cmark if any cmark-related options were specified.
     if (args.cmark_build_variant is not None):
@@ -1226,15 +1215,19 @@ details of the setups of other systems or automated environments.""")
     if args.build_subdir is None:
         args.build_subdir = compute_build_subdir(args)
 
+    # Add optional stdlib-deployment-targets
+    if args.android:
+        args.stdlib_deployment_targets.append(
+            StdlibDeploymentTarget.Android.armv7)
+
     workspace = Workspace(
         source_root=SWIFT_SOURCE_ROOT,
         build_root=os.path.join(SWIFT_BUILD_ROOT, args.build_subdir))
 
     if args.build_ninja:
         if not os.path.exists(workspace.source_dir("ninja")):
-            print_with_argv0("Can't find source directory for ninja "
-                             "(tried %s)" % (workspace.source_dir("ninja")))
-            return 1
+            diagnostics.fatal("can't find source directory for ninja "
+                              "(tried %s)" % (workspace.source_dir("ninja")))
 
     os.umask(0o022)
 
@@ -1251,7 +1244,7 @@ details of the setups of other systems or automated environments.""")
     if args.show_sdks:
         swift_build_support.debug.print_xcodebuild_versions()
 
-    # Clean build direcotry if requested.
+    # Clean build directory if requested.
     if args.clean:
         shell.rmtree(workspace.build_root)
 
@@ -1274,7 +1267,7 @@ details of the setups of other systems or automated environments.""")
     build_script_impl_args = [
         "--workspace", workspace.source_root,
         "--build-dir", workspace.build_root,
-        "--install-prefix", os.path.abspath(args.install_prefix),
+        "--install-prefix", args.install_prefix,
         "--host-target", args.host_target,
         "--stdlib-deployment-targets",
         " ".join(args.stdlib_deployment_targets),
@@ -1443,19 +1436,18 @@ details of the setups of other systems or automated environments.""")
 
     # If we have extra_cmake_options, combine all of them together and then add
     # them as one command.
-    # Note that args.extra_cmake_options is a list of lists of options.
     if args.extra_cmake_options:
         build_script_impl_args += [
             "--extra-cmake-options=%s" % ' '.join(
-                pipes.quote(opt)
-                for options in args.extra_cmake_options
-                for opt in options)
+                pipes.quote(opt) for opt in args.extra_cmake_options)
         ]
 
     build_script_impl_args += args.build_script_impl_args
 
-    check_call([build_script_impl] + build_script_impl_args,
-               disable_sleep=True)
+    if args.dry_run:
+        build_script_impl_args += ["--dry-run"]
+
+    call_without_sleeping([build_script_impl] + build_script_impl_args)
 
     if args.symbols_package:
         print('--- Creating symbols package ---')
@@ -1480,17 +1472,15 @@ details of the setups of other systems or automated environments.""")
 
 def main():
     if not SWIFT_SOURCE_ROOT:
-        print_with_argv0(
-            "Could not infer source root directory.  " +
-            "Forgot to set $SWIFT_SOURCE_ROOT environment variable?")
-        return 1
+        diagnostics.fatal(
+            "could not infer source root directory " +
+            "(forgot to set $SWIFT_SOURCE_ROOT environment variable?)")
 
     if not os.path.isdir(SWIFT_SOURCE_ROOT):
-        print_with_argv0(
-            "Source root directory \'" + SWIFT_SOURCE_ROOT +
-            "\' does not exist.  " +
-            "Forgot to set $SWIFT_SOURCE_ROOT environment variable?")
-        return 1
+        diagnostics.fatal(
+            "source root directory \'" + SWIFT_SOURCE_ROOT +
+            "\' does not exist " +
+            "(forgot to set $SWIFT_SOURCE_ROOT environment variable?)")
 
     # Determine if we are invoked in the preset mode and dispatch accordingly.
     if any([(opt.startswith("--preset") or opt == "--show-presets")

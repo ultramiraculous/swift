@@ -1226,7 +1226,7 @@ createInPlaceMetadataInitializationFunction(IRGenModule &IGM,
     IGM.DebugInfo->emitArtificialFunction(IGF, fn);
 
   // Skip instrumentation when building for TSan to avoid false positives.
-  // The syncronization for this happens in the Runtime and we do not see it.
+  // The synchronization for this happens in the Runtime and we do not see it.
   if (IGM.IRGen.Opts.Sanitize == SanitizerKind::Thread)
     fn->removeFnAttr(llvm::Attribute::SanitizeThread);
 
@@ -1989,11 +1989,16 @@ llvm::Value *IRGenFunction::emitTypeLayoutRef(SILType type) {
 
 void IRGenModule::setTrueConstGlobal(llvm::GlobalVariable *var) {
   switch (TargetInfo.OutputObjectFormat) {
+  case llvm::Triple::UnknownObjectFormat:
+    llvm_unreachable("unknown object format");
   case llvm::Triple::MachO:
-    var->setSection("__TEXT, __const");
+    var->setSection("__TEXT,__const");
     break;
-  // TODO: ELF?
-  default:
+  case llvm::Triple::ELF:
+    var->setSection(".rodata");
+    break;
+  case llvm::Triple::COFF:
+    var->setSection(".rdata");
     break;
   }
 }
@@ -2890,7 +2895,7 @@ namespace {
       IRGenFunction IGF(IGM, f);
 
       // Skip instrumentation when building for TSan to avoid false positives.
-      // The syncronization for this happens in the Runtime and we do not see it.
+      // The synchronization for this happens in the Runtime and we do not see it.
       if (IGM.IRGen.Opts.Sanitize == SanitizerKind::Thread)
         f->removeFnAttr(llvm::Attribute::SanitizeThread);
 

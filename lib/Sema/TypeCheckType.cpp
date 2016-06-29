@@ -417,9 +417,14 @@ Type TypeChecker::applyGenericArguments(Type type, SourceLoc loc,
 
   auto unbound = type->getAs<UnboundGenericType>();
   if (!unbound) {
-    if (!type->is<ErrorType>())
-      diagnose(loc, diag::not_a_generic_type, type)
-          .fixItRemove(generic->getAngleBrackets());
+    if (!type->is<ErrorType>()) {
+      auto diag = diagnose(loc, diag::not_a_generic_type, type);
+
+      // Don't add fixit on module type; that isn't the right type regardless
+      // of whether it had generic arguments.
+      if (!type->is<ModuleType>())
+        diag.fixItRemove(generic->getAngleBrackets());
+    }
     generic->setInvalid();
     return type;
   }
@@ -532,7 +537,7 @@ Type TypeChecker::applyUnboundGenericArguments(
 
     // Check the generic arguments against the generic signature.
     auto genericSig = unbound->getDecl()->getGenericSignature();
-    if (unbound->getDecl()->IsValidatingGenericSignature()) {
+    if (unbound->getDecl()->isValidatingGenericSignature()) {
       diagnose(loc, diag::recursive_requirement_reference);
       return nullptr;
     }
@@ -562,11 +567,50 @@ static Type applyGenericTypeReprArgs(TypeChecker &TC, Type type, SourceLoc loc,
 
 /// \brief Diagnose a use of an unbound generic type.
 static void diagnoseUnboundGenericType(TypeChecker &tc, Type ty,SourceLoc loc) {
-  tc.diagnose(loc, diag::generic_type_requires_arguments, ty);
   auto unbound = ty->castTo<UnboundGenericType>();
+  {
+    InFlightDiagnostic diag = tc.diagnose(loc,
+        diag::generic_type_requires_arguments, ty);
+    if (auto *genericD = unbound->getDecl()) {
+
+      // Tries to infer the type arguments to pass.
+      // Currently it only works if all the generic arguments have a super type,
+      // or it requires a class, in which case it infers 'AnyObject'.
+      auto inferGenericArgs = [](GenericTypeDecl *genericD)->std::string {
+        GenericParamList *genParamList = genericD->getGenericParams();
+        if (!genParamList)
+          return std::string();
+        auto params= genParamList->getParams();
+        if (params.empty())
+          return std::string();
+        std::string argsToAdd = "<";
+        for (unsigned i = 0, e = params.size(); i != e; ++i) {
+          auto param = params[i];
+          auto archTy = param->getArchetype();
+          if (!archTy)
+            return std::string();
+          if (auto superTy = archTy->getSuperclass()) {
+            argsToAdd += superTy.getString();
+          } else if (archTy->requiresClass()) {
+            argsToAdd += "AnyObject";
+          } else {
+            return std::string(); // give up.
+          }
+          if (i < e-1)
+            argsToAdd += ", ";
+        }
+        argsToAdd += ">";
+        return argsToAdd;
+      };
+
+      std::string genericArgsToAdd = inferGenericArgs(genericD);
+      if (!genericArgsToAdd.empty()) {
+        diag.fixItInsertAfter(loc, genericArgsToAdd);
+      }
+    }
+  }
   tc.diagnose(unbound->getDecl()->getLoc(), diag::generic_type_declared_here,
               unbound->getDecl()->getName());
-  // TODO: emit fixit for "NSArray" -> "NSArray<AnyObject>", etc.
 }
 
 /// \brief Returns a valid type or ErrorType in case of an error.
@@ -1110,12 +1154,21 @@ static Type resolveNestedIdentTypeComponent(
     member = memberTypes.back().first;
   }
 
-  if (parentTy->isExistentialType()) {
+  if (parentTy->isExistentialType() && isa<AssociatedTypeDecl>(member)) {
     if (diagnoseErrors)
       TC.diagnose(comp->getIdLoc(), diag::assoc_type_outside_of_protocol,
                   comp->getIdentifier());
 
     return ErrorType::get(TC.Context);
+  }
+  if (auto alias = dyn_cast<TypeAliasDecl>(member)) {
+    if (parentTy->isExistentialType() && memberType->hasTypeParameter()) {
+      if (diagnoseErrors)
+        TC.diagnose(comp->getIdLoc(), diag::typealias_to_assoc_type_outside_of_protocol,
+                    comp->getIdentifier(), alias->getUnderlyingTypeLoc());
+
+      return ErrorType::get(TC.Context);
+    }
   }
 
   // If there are generic arguments, apply them now.
@@ -1200,25 +1253,10 @@ static bool checkTypeDeclAvailability(Decl *TypeDecl, IdentTypeRepr *IdType,
 
       case UnconditionalAvailabilityKind::Unavailable:
       case UnconditionalAvailabilityKind::UnavailableInCurrentSwift:
-        if (!Attr->Rename.empty()) {
-          auto diag = TC.diagnose(Loc,
-                                  diag::availability_decl_unavailable_rename,
-                                  CI->getIdentifier(), /*"replaced"*/false,
-                                  /*special kind*/0, Attr->Rename);
-          fixItAvailableAttrRename(TC, diag, Loc, Attr, /*call*/nullptr);
-        } else if (Attr->Message.empty()) {
-          TC.diagnose(Loc, diag::availability_decl_unavailable,
-                      CI->getIdentifier())
-            .highlight(Loc);
-        } else {
-          EncodedDiagnosticMessage EncodedMessage(Attr->Message);
-          TC.diagnose(Loc, diag::availability_decl_unavailable_msg,
-                      CI->getIdentifier(), EncodedMessage.Message)
-            .highlight(Loc);
-        }
-        break;
+      case UnconditionalAvailabilityKind::UnavailableInSwift: {
+        bool inSwift = (Attr->getUnconditionalAvailability() ==
+                        UnconditionalAvailabilityKind::UnavailableInSwift);
 
-      case UnconditionalAvailabilityKind::UnavailableInSwift:
         if (!Attr->Rename.empty()) {
           auto diag = TC.diagnose(Loc,
                                   diag::availability_decl_unavailable_rename,
@@ -1226,16 +1264,21 @@ static bool checkTypeDeclAvailability(Decl *TypeDecl, IdentTypeRepr *IdType,
                                   /*special kind*/0, Attr->Rename);
           fixItAvailableAttrRename(TC, diag, Loc, Attr, /*call*/nullptr);
         } else if (Attr->Message.empty()) {
-          TC.diagnose(Loc, diag::availability_decl_unavailable_in_swift,
+          TC.diagnose(Loc,
+                      inSwift ? diag::availability_decl_unavailable_in_swift
+                              : diag::availability_decl_unavailable,
                       CI->getIdentifier())
             .highlight(Loc);
         } else {
           EncodedDiagnosticMessage EncodedMessage(Attr->Message);
-          TC.diagnose(Loc, diag::availability_decl_unavailable_in_swift_msg,
+          TC.diagnose(Loc,
+                      inSwift ? diag::availability_decl_unavailable_in_swift_msg
+                              : diag::availability_decl_unavailable_msg,
                       CI->getIdentifier(), EncodedMessage.Message)
             .highlight(Loc);
         }
         break;
+      }
       }
 
       auto DLoc = TypeDecl->getLoc();
@@ -1704,7 +1747,7 @@ Type TypeResolver::resolveAttributedType(TypeAttributes &attrs,
   // Pass down the variable function type attributes to the
   // function-type creator.
   static const TypeAttrKind FunctionAttrs[] = {
-    TAK_convention, TAK_noreturn,
+    TAK_convention, TAK_noreturn, TAK_pseudogeneric,
     TAK_callee_owned, TAK_callee_guaranteed, TAK_noescape, TAK_autoclosure
   };
 
@@ -1782,7 +1825,8 @@ Type TypeResolver::resolveAttributedType(TypeAttributes &attrs,
 
     // Resolve the function type directly with these attributes.
     SILFunctionType::ExtInfo extInfo(rep,
-                                     attrs.has(TAK_noreturn));
+                                     attrs.has(TAK_noreturn),
+                                     attrs.has(TAK_pseudogeneric));
 
     ty = resolveSILFunctionType(fnRepr, options, extInfo, calleeConvention);
     if (!ty || ty->is<ErrorType>()) return ty;
@@ -3208,10 +3252,18 @@ public:
   }
 
   bool walkToTypeReprPre(TypeRepr *T) {
+    if (T->isInvalid())
+      return false;
+    if (auto compound = dyn_cast<CompoundIdentTypeRepr>(T)) {
+      // Only visit the last component to check, because nested typealiases in
+      // existentials are okay.
+      visit(compound->getComponentRange().back());
+      return false;
+    }
     visit(T);
     return true;
   }
-    
+
   std::pair<bool, Stmt*> walkToStmtPre(Stmt *S) {
     if (recurseIntoSubstatements) {
       return { true, S };

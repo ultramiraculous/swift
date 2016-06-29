@@ -182,7 +182,7 @@ public:
       return;
     auto &Parent = Parents.back();
     for (auto CIT = std::find(Parent->child_begin(), Parent->child_end(), C) + 1;
-         CIT != Parent->child_end(); CIT ++) {
+         CIT != Parent->child_end(); CIT++) {
       if (auto TC = dyn_cast<TextComment>(*CIT)) {
         auto Text = TC->getText();
         std::vector<StringRef> Subs;
@@ -277,6 +277,29 @@ void getSwiftDocKeyword(const Decl* D, CommandWordsPairs &Words) {
 }
 } // end namespace markup
 } // end namespace swift
+
+static bool shouldHideDeclFromCompletionResults(const ValueDecl *D) {
+  // Hide private stdlib declarations.
+  if (D->isPrivateStdlibDecl(/*whitelistProtocols*/false) ||
+      // ShowInInterfaceAttr is for decls to show in interface as exception but
+      // they are not intended to be used directly.
+      D->getAttrs().hasAttribute<ShowInInterfaceAttr>())
+    return true;
+
+  if (AvailableAttr::isUnavailable(D))
+    return true;
+
+  if (auto *ClangD = D->getClangDecl()) {
+    if (ClangD->hasAttr<clang::SwiftPrivateAttr>())
+      return true;
+  }
+
+  // Hide editor placeholders.
+  if (D->getName().isEditorPlaceholder())
+    return true;
+
+  return false;
+}
 
 typedef llvm::function_ref<bool(ValueDecl*, DeclVisibilityKind)> DeclFilter;
 DeclFilter DefaultFilter = [] (ValueDecl* VD, DeclVisibilityKind Kind) {return true;};
@@ -728,7 +751,7 @@ void CodeCompletionResult::print(raw_ostream &OS) const {
       Prefix.append(KW);
       Prefix.append(Sep);
     }
-    for (unsigned I = 0, N = Sep.size(); I < N; ++ I)
+    for (unsigned I = 0, N = Sep.size(); I < N; ++I)
       Prefix.pop_back();
     Prefix.append("]");
   }
@@ -1390,7 +1413,7 @@ ArchetypeTransformer::ArchetypeTransformer(DeclContext *DC, Type Ty) :
   auto Params = D->getInnermostGenericParamTypes();
   auto Args = BaseTy->getAllGenericArgs(Scrach);
   assert(Params.size() == Args.size());
-  for (unsigned I = 0, N = Params.size(); I < N; I ++) {
+  for (unsigned I = 0, N = Params.size(); I < N; I++) {
     Map[Params[I]->getCanonicalType()->castTo<GenericTypeParamType>()] = Args[I];
   }
 }
@@ -1938,7 +1961,7 @@ public:
     if (!VD->hasName() ||
         !VD->isUserAccessible() ||
         (VD->hasAccessibility() && !VD->isAccessibleFrom(CurrDeclContext)) ||
-        AvailableAttr::isUnavailable(VD))
+        shouldHideDeclFromCompletionResults(VD))
       return;
 
     StringRef Name = VD->getName().get();
@@ -2173,11 +2196,15 @@ public:
     // #keyPath is only available when the Objective-C runtime is.
     if (!Ctx.LangOpts.EnableObjCInterop) return;
 
+    // After #, this is a very likely result. When just in a String context,
+    // it's not.
+    auto semanticContext = needPound ? SemanticContextKind::None
+                                     : SemanticContextKind::ExpressionSpecific;
+
     CodeCompletionResultBuilder Builder(
                                   Sink,
                                   CodeCompletionResult::ResultKind::Keyword,
-                                  SemanticContextKind::ExpressionSpecific,
-                                  ExpectedTypes);
+                                  semanticContext, ExpectedTypes);
     if (needPound)
       Builder.addTextChunk("#keyPath");
     else
@@ -2430,8 +2457,7 @@ public:
     if (CurrDeclContext->lookupQualified(type, Ctx.Id_init, NL_QualifiedDefault,
                                          TypeResolver.get(), initializers)) {
       for (auto *init : initializers) {
-        if (init->isPrivateStdlibDecl(/*whitelistProtocols*/ false) ||
-            AvailableAttr::isUnavailable(init))
+        if (shouldHideDeclFromCompletionResults(init))
           continue;
         addConstructorCall(cast<ConstructorDecl>(init), Reason, None, name);
       }
@@ -2526,7 +2552,7 @@ public:
                          bool HasTypeContext) {
     if (!EED->hasName() ||
         (EED->hasAccessibility() && !EED->isAccessibleFrom(CurrDeclContext)) ||
-        AvailableAttr::isUnavailable(EED))
+        shouldHideDeclFromCompletionResults(EED))
       return;
     CommandWordsPairs Pairs;
     CodeCompletionResultBuilder Builder(
@@ -2628,15 +2654,7 @@ public:
 
   // Implement swift::VisibleDeclConsumer.
   void foundDecl(ValueDecl *D, DeclVisibilityKind Reason) override {
-    // Hide private stdlib declarations.
-    if (D->isPrivateStdlibDecl(/*whitelistProtocols*/false) ||
-        D->getAttrs().hasAttribute<ShowInInterfaceAttr>())
-      return;
-    if (AvailableAttr::isUnavailable(D))
-      return;
-
-    // Hide editor placeholders.
-    if (D->getName().isEditorPlaceholder())
+    if (shouldHideDeclFromCompletionResults(D))
       return;
 
     if (IsKeyPathExpr && !KeyPathFilter(D, Reason))
@@ -4008,7 +4026,7 @@ public:
       return;
     }
 
-    if (AvailableAttr::isUnavailable(D))
+    if (shouldHideDeclFromCompletionResults(D))
       return;
 
     if (D->getAttrs().hasAttribute<FinalAttr>())

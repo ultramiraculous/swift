@@ -20,6 +20,7 @@
 #include "ImportEnumInfo.h"
 #include "SwiftLookupTable.h"
 #include "swift/ClangImporter/ClangImporter.h"
+#include "swift/ClangImporter/ClangModule.h"
 #include "swift/AST/ASTContext.h"
 #include "swift/AST/LazyResolver.h"
 #include "swift/AST/Module.h"
@@ -65,7 +66,6 @@ class TypedefNameDecl;
 namespace swift {
 
 class ASTContext;
-class ClangModuleUnit;
 class ClassDecl;
 class ConstructorDecl;
 class Decl;
@@ -907,9 +907,6 @@ public:
       }
     }
 
-    /// Print this imported name as a string suitable for the swift_name
-    /// attribute.
-    void printSwiftName(llvm::raw_ostream &os) const;
   };
 
   /// Flags that control the import of names in importFullName.
@@ -937,6 +934,10 @@ public:
   Identifier importMacroName(const clang::IdentifierInfo *clangIdentifier,
                              const clang::MacroInfo *macro,
                              clang::ASTContext &clangCtx);
+
+  /// Print an imported name as a string suitable for the swift_name attribute,
+  /// or the 'Rename' field of AvailableAttr.
+  void printSwiftName(ImportedName, bool fullyQualified, llvm::raw_ostream &os);
 
   /// Retrieve the property type as determined by the given accessor.
   static clang::QualType
@@ -981,6 +982,9 @@ public:
   clang::SwiftNewtypeAttr *getSwiftNewtypeAttr(
       const clang::TypedefNameDecl *decl,
       bool useSwift2Name);
+
+  /// Map a Clang identifier name to its imported Swift equivalent.
+  StringRef getSwiftNameFromClangName(StringRef name);
 
   /// Import attributes from the given Clang declaration to its Swift
   /// equivalent.

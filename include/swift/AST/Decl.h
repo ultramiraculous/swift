@@ -667,7 +667,7 @@ public:
   /// Retrieve the innermost declaration context corresponding to this
   /// declaration, which will either be the declaration itself (if it's
   /// also a declaration context) or its declaration context.
-  DeclContext *getInnermostDeclContext();
+  DeclContext *getInnermostDeclContext() const;
 
   /// \brief Retrieve the module in which this declaration resides.
   ModuleDecl *getModuleContext() const;
@@ -2144,6 +2144,10 @@ public:
   /// first slot.
   Optional<ObjCSelector> getObjCRuntimeName() const;
 
+  /// Determine whether the given declaration can infer @objc, or the
+  /// Objective-C name, if used to satisfy the given requirement.
+  bool canInferObjCFromRequirement(ValueDecl *requirement);
+
   SourceLoc getNameLoc() const { return NameLoc; }
   SourceLoc getLoc() const { return NameLoc; }
 
@@ -2411,7 +2415,7 @@ public:
     ValidatingGenericSignature = ivgs;
   }
   
-  bool IsValidatingGenericSignature() {
+  bool isValidatingGenericSignature() const {
     return ValidatingGenericSignature;
   }
   
@@ -4189,7 +4193,8 @@ public:
     return VarDeclBits.IsUserAccessible;
   }
 
-  /// \brief Retrieve the source range of the variable type.
+  /// Retrieve the source range of the variable type, or an invalid range if the
+  /// variable's type is not explicitly written in the source.
   ///
   /// Only for use in diagnostics.  It is not always possible to always
   /// precisely point to the variable type because of type aliases.

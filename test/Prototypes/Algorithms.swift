@@ -40,7 +40,7 @@ public protocol MutableCollectionAlgorithms : MutableCollection {
   ) -> Index
 }
 
-// In the stdlib, this conformace wouldn't be needed
+// In the stdlib, this conformance wouldn't be needed
 extension Array : MutableCollectionAlgorithms {  }
 
 /// In the stdlib, this would simply be MutableCollection
@@ -237,8 +237,8 @@ extension MutableCollection where Self: BidirectionalCollection {
     // actually faster.  The other one sometimes does more swaps, but
     // has better locality properties.  Similarly, we've omitted a
     // specialization of rotate for RandomAccessCollection that uses
-    // cycles per section 11.4 in “From Mathematics to Generic
-    // Programming” by A. Stepanov because it has *much* worse
+    // cycles per section 11.4 in "From Mathematics to Generic
+    // Programming" by A. Stepanov because it has *much* worse
     // locality properties than either of the other implementations.
     // Benchmarks should be performed for that algorithm too, just to
     // be sure.
@@ -306,7 +306,7 @@ extension BidirectionalCollection
 
   @discardableResult
   mutating func stablePartition(
-    choosingStartGroupBy p: (Iterator.Element)->Bool
+    choosingStartGroupBy p: (Iterator.Element) -> Bool
   ) -> Index {
     return stablyPartitionSubrange(
       startIndex..<endIndex,
@@ -316,7 +316,7 @@ extension BidirectionalCollection
   
   mutating func stablyPartitionSubrange(
     _ bounds: Range<Index>,
-    choosingStartGroupBy p: (Iterator.Element)->Bool
+    choosingStartGroupBy p: (Iterator.Element) -> Bool
   ) -> Index {
     return _stablyPartitionSubrange(
       bounds,
@@ -328,7 +328,7 @@ extension BidirectionalCollection
   mutating func _stablyPartitionSubrange(
     _ bounds: Range<Index>,
     distance n: IndexDistance,
-    choosingStartGroupBy p: (Iterator.Element)->Bool
+    choosingStartGroupBy p: (Iterator.Element) -> Bool
   ) -> Index {
     assert(n >= 0)
     let (start, end) = (bounds.lowerBound, bounds.upperBound)
@@ -358,7 +358,7 @@ extension BidirectionalCollection
   
 extension Collection {
   func stablyPartitioned(
-    choosingStartGroupBy p: (Iterator.Element)->Bool
+    choosingStartGroupBy p: (Iterator.Element) -> Bool
   ) -> [Iterator.Element] {
     var a = Array(self)
     a.stablePartition(choosingStartGroupBy: p)
@@ -369,7 +369,7 @@ extension Collection {
 extension LazyCollectionProtocol 
   where Iterator.Element == Elements.Iterator.Element {
   func stablyPartitioned(
-    choosingStartGroupBy p: (Iterator.Element)->Bool
+    choosingStartGroupBy p: (Iterator.Element) -> Bool
   ) -> LazyCollection<[Iterator.Element]> {
     return elements.stablyPartitioned(choosingStartGroupBy: p).lazy
   }

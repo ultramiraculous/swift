@@ -3066,6 +3066,7 @@ void Serializer::writeType(Type ty) {
           stableCalleeConvention,
           stableRepresentation,
           fnTy->isNoReturn(),
+          fnTy->isPseudogeneric(),
           fnTy->hasErrorResult(),
           fnTy->getParameters().size(),
           fnTy->getNumAllResults(),
@@ -3747,7 +3748,7 @@ static void writeDeclCommentTable(
       generator.insert(copyString(USRBuffer.str()),
                        { ED->getBriefComment(), Raw,
                          GroupContext.getGroupSequence(ED),
-                         SourceOrder ++ });
+                         SourceOrder++ });
     }
 
     bool walkToDeclPre(Decl *D) override {
@@ -3794,7 +3795,7 @@ static void writeDeclCommentTable(
       generator.insert(copyString(USRBuffer.str()),
                        { VD->getBriefComment(), Raw,
                          GroupContext.getGroupSequence(VD),
-                         SourceOrder ++ });
+                         SourceOrder++ });
       return true;
     }
   };

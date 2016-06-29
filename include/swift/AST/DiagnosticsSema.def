@@ -130,8 +130,12 @@ ERROR(expression_too_complex,none,
       "expression was too complex to be solved in reasonable time; "
       "consider breaking up the expression into distinct sub-expressions", ())
 
-ERROR(comparison_with_nil_illegal,none,
-      "value of type %0 can never be nil, comparison isn't allowed",
+ERROR(value_type_comparison_with_nil_illegal_did_you_mean,none,
+      "value of type %0 cannot be compared by reference; "
+      "did you mean to compare by value?",
+      (Type))
+ERROR(value_type_comparison_with_nil_illegal,none,
+      "type %0 is not optional, value can never be nil",
       (Type))
 
 ERROR(cannot_match_expr_pattern_with_value,none,
@@ -754,6 +758,9 @@ ERROR(instance_member_in_initializer,none,
       "cannot use instance member %0 within property initializer; "
       "property initializers run before 'self' is available", (DeclName))
 
+ERROR(invalid_initialization_parameter_same_type,none,
+      "invalid initializer call with same type %0 as parameter", (Type))
+
 ERROR(missing_argument_named,none,
       "missing argument for parameter %0 in call", (Identifier))
 ERROR(missing_argument_positional,none,
@@ -1340,6 +1347,9 @@ NOTE(optional_req_near_match_accessibility,none,
 // Protocols and existentials
 ERROR(assoc_type_outside_of_protocol,none,
       "cannot use associated type %0 outside of its protocol", (Identifier))
+ERROR(typealias_to_assoc_type_outside_of_protocol,none,
+      "cannot use typealias %0 of associated type %1 outside of its protocol",
+      (Identifier, TypeLoc))
 
 ERROR(circular_protocol_def,none,
       "circular protocol inheritance %0", (StringRef))
@@ -1460,6 +1470,12 @@ NOTE(subscript_override_here,none,
      "attempt to override subscript here", ())
 NOTE(convenience_init_override_here,none,
      "attempt to override convenience initializer here", ())
+NOTE(override_type_mismatch_with_fixits,none,
+     "type does not match superclass %0 with type %1",
+     (DescriptiveDeclKind, Type))
+NOTE(override_type_mismatch_with_fixits_init,none,
+     "type does not match superclass initializer with %select{no arguments|argument %1|arguments %1}0",
+     (unsigned, Type))
 ERROR(override_nonclass_decl,none,
       "'override' can only be specified on class members", ())
 ERROR(override_property_type_mismatch,none,
@@ -2123,6 +2139,18 @@ NOTE(transitive_capture_through_here,none,
      "%0, declared here, captures %1",
      (Identifier, Identifier))
 
+ERROR(closure_implicit_capture_without_noescape,none,
+      "closure cannot implicitly capture an inout parameter unless @noescape",
+      ())
+ERROR(closure_implicit_capture_mutating_self,none,
+      "closure cannot implicitly capture a mutating self parameter",
+      ())
+ERROR(nested_function_with_implicit_capture_argument,none,
+      "nested function with %select{an |}0implicitly captured inout "
+      "parameter%select{|s}0 can only be used as a @noescape argument", (bool))
+ERROR(nested_function_escaping_inout_capture,none,
+      "nested function cannot capture inout parameter and escape", ())
+
 WARNING(recursive_accessor_reference,none,
         "attempting to %select{access|modify}1 %0 within its own "
         "%select{getter|setter}1", (Identifier, bool))
@@ -2700,6 +2728,13 @@ ERROR(objc_override_method_selector_mismatch,none,
 ERROR(objc_override_property_name_mismatch,none,
       "Objective-C property has a different name from the "
       "property it overrides (%0 vs. %1)", (Identifier, Identifier))
+
+ERROR(objc_ambiguous_inference,none,
+      "ambiguous inference of Objective-C name for %0 %1 (%2 vs %3)",
+      (DescriptiveDeclKind, DeclName, ObjCSelector, ObjCSelector))
+NOTE(objc_ambiguous_inference_candidate,none,
+     "%0 (in protocol %1) provides Objective-C name %2",
+     (DeclName, DeclName, ObjCSelector))
 
 ERROR(nonlocal_bridged_to_objc,none,
       "conformance of %0 to %1 can only be written in module %2",

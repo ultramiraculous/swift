@@ -1284,14 +1284,20 @@ namespace {
 
     /// Mark the given declaration as the Swift 2 variant of a Swift 3
     /// declaration with the given name.
-    static void markAsSwift2Variant(Decl *decl, ImportedName swift3Name) {
+    void markAsSwift2Variant(Decl *decl, ImportedName swift3Name,
+                             DeclContext *newDC = nullptr) {
       ASTContext &ctx = decl->getASTContext();
 
       llvm::SmallString<64> renamed;
       {
         // Render a swift_name string.
         llvm::raw_svector_ostream os(renamed);
-        swift3Name.printSwiftName(os);
+
+        // If we're importing a global as a member, we need to provide the
+        // effective context.
+        Impl.printSwiftName(swift3Name,
+                            /*fullyQualified=*/swift3Name.ImportAsMember,
+                            os);
       }
 
       auto attr = AvailableAttr::createUnconditional(
@@ -2942,6 +2948,7 @@ namespace {
             getProtocolMethodType(proto, fnType->castTo<AnyFunctionType>());
         result->setType(fnType);
         result->setInterfaceType(interfaceType);
+        result->setGenericSignature(proto->getGenericSignature());
       } else {
         result->setType(fnType);
       }
@@ -3739,6 +3746,7 @@ namespace {
       result->setBodyResultType(resultTy);
       result->setType(type);
       result->setInterfaceType(interfaceType);
+      result->setGenericSignature(dc->getGenericSignatureOfContext());
 
       // Optional methods in protocols.
       if (decl->getImplementationControl() == clang::ObjCMethodDecl::Optional &&
@@ -4214,6 +4222,7 @@ namespace {
 
         result->setInitializerInterfaceType(interfaceInitType);
         result->setInterfaceType(interfaceAllocType);
+        result->setGenericSignature(dc->getGenericSignatureOfContext());
       } else if (dc->isGenericContext()) {
         Type interfaceAllocType;
         Type interfaceInitType;
@@ -4224,6 +4233,7 @@ namespace {
 
         result->setInitializerInterfaceType(interfaceInitType);
         result->setInterfaceType(interfaceAllocType);
+        result->setGenericSignature(dc->getGenericSignatureOfContext());
         selfVar->overwriteType(initType->castTo<AnyFunctionType>()->getInput());
       }
 
@@ -4406,6 +4416,7 @@ namespace {
           getter->getClangNode());
       thunk->setBodyResultType(elementTy);
       thunk->setInterfaceType(interfaceType);
+      thunk->setGenericSignature(dc->getGenericSignatureOfContext());
       thunk->setAccessibility(Accessibility::Public);
 
       auto objcAttr = getter->getAttrs().getAttribute<ObjCAttr>();
@@ -4481,6 +4492,7 @@ namespace {
           setter->getClangNode());
       thunk->setBodyResultType(TupleType::getEmpty(C));
       thunk->setInterfaceType(interfaceType);
+      thunk->setGenericSignature(dc->getGenericSignatureOfContext());
       thunk->setAccessibility(Accessibility::Public);
 
       auto objcAttr = setter->getAttrs().getAttribute<ObjCAttr>();
@@ -6086,6 +6098,38 @@ clang::SwiftNewtypeAttr *ClangImporter::Implementation::getSwiftNewtypeAttr(
   return decl->getAttr<clang::SwiftNewtypeAttr>();
 }
 
+StringRef ClangImporter::Implementation::
+getSwiftNameFromClangName(StringRef replacement) {
+  auto &clangSema = getClangSema();
+
+  clang::IdentifierInfo *identifier =
+      &clangSema.getASTContext().Idents.get(replacement);
+  clang::LookupResult lookupResult(clangSema, identifier,
+                                   clang::SourceLocation(),
+                                   clang::Sema::LookupOrdinaryName);
+  if (!clangSema.LookupName(lookupResult, nullptr))
+    return "";
+
+  auto clangDecl = lookupResult.getAsSingle<clang::NamedDecl>();
+  if (!clangDecl)
+    return "";
+
+  auto importedName = importFullName(clangDecl, None, &clangSema);
+  if (!importedName)
+    return "";
+
+  llvm::SmallString<64> renamed;
+  {
+    // Render a swift_name string.
+    llvm::raw_svector_ostream os(renamed);
+    printSwiftName(importedName,
+                   /*fullyQualified=*/true,
+                   os);
+  }
+
+  return SwiftContext.AllocateCopy(StringRef(renamed));
+}
+
 /// Import Clang attributes as Swift attributes.
 void ClangImporter::Implementation::importAttributes(
     const clang::NamedDecl *ClangDecl,
@@ -6104,7 +6148,7 @@ void ClangImporter::Implementation::importAttributes(
   for (clang::NamedDecl::attr_iterator AI = ClangDecl->attr_begin(),
        AE = ClangDecl->attr_end(); AI != AE; ++AI) {
     //
-    // __attribute__((unavailable)
+    // __attribute__((unavailable))
     //
     // Mapping: @available(*,unavailable)
     //
@@ -6150,8 +6194,13 @@ void ClangImporter::Implementation::importAttributes(
 
       // Is this our special "availability(swift, unavailable)" attribute?
       if (Platform == "swift") {
+        auto replacement = avail->getReplacement();
+        StringRef swiftReplacement = "";
+        if (!replacement.empty())
+          swiftReplacement = getSwiftNameFromClangName(replacement);
+
         auto attr = AvailableAttr::createUnconditional(
-            C, avail->getMessage(), /*renamed*/"",
+            C, avail->getMessage(), swiftReplacement,
             UnconditionalAvailabilityKind::UnavailableInSwift);
         MappedDecl->getAttrs().add(attr);
         AnyUnavailable = true;
@@ -6204,12 +6253,17 @@ void ClangImporter::Implementation::importAttributes(
 
       const auto &obsoleted = avail->getObsoleted();
       const auto &introduced = avail->getIntroduced();
+      const auto &replacement = avail->getReplacement();
+
+      StringRef swiftReplacement = "";
+      if (!replacement.empty())
+        swiftReplacement = getSwiftNameFromClangName(replacement);
 
       auto AvAttr = new (C) AvailableAttr(SourceLoc(), SourceRange(),
-                                             platformK.getValue(),
-                                             message, /*rename*/StringRef(),
-                                             introduced, deprecated, obsoleted,
-                                             Unconditional, /*implicit=*/false);
+                                          platformK.getValue(),
+                                          message, swiftReplacement,
+                                          introduced, deprecated, obsoleted,
+                                          Unconditional, /*implicit=*/false);
 
       MappedDecl->getAttrs().add(AvAttr);
     }

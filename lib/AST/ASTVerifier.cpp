@@ -2196,6 +2196,15 @@ struct ASTNodeBase {};
         abort();
       }
 
+      // If the function has a generic interface type, it should also have a
+      // generic signature.
+      if (AFD->getInterfaceType()->is<GenericFunctionType>() !=
+          (AFD->getGenericSignature() != nullptr)) {
+        Out << "Missing generic signature for generic function\n";
+        AFD->dump(Out);
+        abort();
+      }
+
       // If there is an interface type, it shouldn't have any unresolved
       // dependent member types.
       // FIXME: This is a general property of the type system.
@@ -2769,14 +2778,6 @@ struct ASTNodeBase {};
       }
       checkSourceRanges(D->getSourceRange(), Parent,
                         [&]{ D->print(Out); });
-      if (auto *VD = dyn_cast<VarDecl>(D)) {
-        if (!VD->getTypeSourceRangeForDiagnostics().isValid()) {
-          Out << "invalid type source range for variable decl: ";
-          D->print(Out);
-          Out << "\n";
-          abort();
-        }
-      }
     }
 
     /// \brief Verify that the given source ranges is contained within the

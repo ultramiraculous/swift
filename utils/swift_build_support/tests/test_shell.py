@@ -9,12 +9,12 @@
 # See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 # ----------------------------------------------------------------------------
 
-import unittest
-import sys
 import os
 import os.path
 import shutil
+import sys
 import tempfile
+import unittest
 try:
     # py2
     from StringIO import StringIO
@@ -42,6 +42,9 @@ class ShellTestCase(unittest.TestCase):
         if os.path.exists(self.tmpdir):
             shutil.rmtree(self.tmpdir)
 
+    def test_quote_command(self):
+        self.assertEqual(shell.quote_command(["a b", "", "c"]), "'a b' '' c")
+
     def test_call(self):
         shell.dry_run = False
         foo_file = os.path.join(self.tmpdir, 'foo.txt')
@@ -59,6 +62,21 @@ class ShellTestCase(unittest.TestCase):
         self.assertEqual(self.stderr.getvalue(), '''\
 + cp {foo_file} {bar_file}
 '''.format(foo_file=foo_file, bar_file=bar_file))
+
+    def test_capture(self):
+        self.assertEqual(shell.capture(["echo", "hi"]), "hi\n")
+
+        with self.assertRaises(SystemExit):
+            shell.capture(["false"])
+
+        self.assertIsNone(shell.capture(["false"], optional=True))
+
+        self.assertEqual(
+            shell.capture(["sh", "-c", "echo foo && false"],
+                          allow_non_zero_exit=True), "foo\n")
+
+        with self.assertRaises(SystemExit):
+            shell.capture(["**not-a-command**"], optional=True)
 
     def test_rmtree(self):
         shell.dry_run = False

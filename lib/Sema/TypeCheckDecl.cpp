@@ -2269,18 +2269,42 @@ static void inferObjCName(TypeChecker &tc, ValueDecl *decl) {
   // When no override determined the Objective-C name, look for
   // requirements for which this declaration is a witness.
   Optional<ObjCSelector> requirementObjCName;
+  ValueDecl *firstReq = nullptr;
   for (auto req : tc.findWitnessedObjCRequirements(decl,
                                                    /*onlyFirst=*/false)) {
     // If this is the first requirement, take its name.
     if (!requirementObjCName) {
       requirementObjCName = req->getObjCRuntimeName();
+      firstReq = req;
       continue;
     }
 
     // If this requirement has a different name from one we've seen,
-    // bail out and let protocol-conformance diagnostics handle this.
-    if (*requirementObjCName != *req->getObjCRuntimeName())
-      return;
+    // note the ambiguity.
+    if (*requirementObjCName != *req->getObjCRuntimeName()) {
+      tc.diagnose(decl, diag::objc_ambiguous_inference,
+                  decl->getDescriptiveKind(), decl->getFullName(),
+                  *requirementObjCName, *req->getObjCRuntimeName());
+      
+      // Note the candidates and what Objective-C names they provide.
+      auto diagnoseCandidate = [&](ValueDecl *req) {
+        auto proto = cast<ProtocolDecl>(req->getDeclContext());
+        auto diag = tc.diagnose(decl,
+                                diag::objc_ambiguous_inference_candidate,
+                                req->getFullName(),
+                                proto->getFullName(),
+                                *req->getObjCRuntimeName());
+        fixDeclarationObjCName(diag, decl, req->getObjCRuntimeName());
+      };
+      diagnoseCandidate(firstReq);
+      diagnoseCandidate(req);
+
+      // Suggest '@nonobjc' to suppress this error, and not try to
+      // infer @objc for anything.
+      tc.diagnose(decl, diag::optional_req_near_match_nonobjc, true)
+        .fixItInsert(decl->getAttributeInsertionLoc(false), "@nonobjc ");
+      break;
+    }
   }
 
   // If we have a name, install it via an @objc attribute.
@@ -4759,6 +4783,49 @@ public:
       type = fnType->withExtInfo(extInfo);
   }
 
+  /// If the difference between the types of \p decl and \p base is something
+  /// we feel confident about fixing (even partially), emit a note with fix-its
+  /// attached. Otherwise, no note will be emitted.
+  ///
+  /// \returns true iff a diagnostic was emitted.
+  static bool noteFixableMismatchedTypes(TypeChecker &TC, ValueDecl *decl,
+                                         const ValueDecl *base) {
+    DiagnosticTransaction tentativeDiags(TC.Diags);
+
+    {
+      Type baseTy = base->getType();
+      if (baseTy->is<ErrorType>())
+        return false;
+
+      Optional<InFlightDiagnostic> activeDiag;
+      if (auto *baseInit = dyn_cast<ConstructorDecl>(base)) {
+        // Special-case initializers, whose "type" isn't useful besides the
+        // input arguments.
+        baseTy = baseTy->getAs<AnyFunctionType>()->getResult();
+        Type argTy = baseTy->getAs<AnyFunctionType>()->getInput();
+        auto diagKind = diag::override_type_mismatch_with_fixits_init;
+        unsigned numArgs = baseInit->getParameters()->size();
+        activeDiag.emplace(TC.diagnose(decl, diagKind,
+                                       /*plural*/std::min(numArgs, 2U),
+                                       argTy));
+      } else {
+        if (isa<AbstractFunctionDecl>(base))
+          baseTy = baseTy->getAs<AnyFunctionType>()->getResult();
+
+        activeDiag.emplace(TC.diagnose(decl,
+                                       diag::override_type_mismatch_with_fixits,
+                                       base->getDescriptiveKind(), baseTy));
+      }
+
+      if (fixItOverrideDeclarationTypes(TC, *activeDiag, decl, base))
+        return true;
+    }
+
+    // There weren't any fixes we knew how to make. Drop this diagnostic.
+    tentativeDiags.abort();
+    return false;
+  }
+
   enum class OverrideCheckingAttempt {
     PerfectMatch,
     MismatchedOptional,
@@ -5132,9 +5199,21 @@ public:
         // Nothing to do.
         
       } else if (method) {
-        // Private migration help for overrides of Objective-C methods.
-        if ((!isa<FuncDecl>(method) || !cast<FuncDecl>(method)->isAccessor()) &&
-            (matchDecl->isObjC() || mayHaveMismatchedOptionals)) {
+        if (attempt == OverrideCheckingAttempt::MismatchedTypes) {
+          auto diagKind = diag::method_does_not_override;
+          if (ctor)
+            diagKind = diag::initializer_does_not_override;
+          TC.diagnose(decl, diagKind);
+          noteFixableMismatchedTypes(TC, decl, matchDecl);
+          TC.diagnose(matchDecl, diag::overridden_near_match_here,
+                      matchDecl->getDescriptiveKind(),
+                      matchDecl->getFullName());
+          emittedMatchError = true;
+
+        } else if ((!isa<FuncDecl>(method) ||
+                    !cast<FuncDecl>(method)->isAccessor()) &&
+                   (matchDecl->isObjC() || mayHaveMismatchedOptionals)) {
+          // Private migration help for overrides of Objective-C methods.
           TypeLoc resultTL;
           if (auto *methodAsFunc = dyn_cast<FuncDecl>(method))
             resultTL = methodAsFunc->getBodyResultTypeLoc();
@@ -5156,7 +5235,15 @@ public:
           return true;
         }
 
-        if (mayHaveMismatchedOptionals) {
+        if (attempt == OverrideCheckingAttempt::MismatchedTypes) {
+          TC.diagnose(decl, diag::subscript_does_not_override);
+          noteFixableMismatchedTypes(TC, decl, matchDecl);
+          TC.diagnose(matchDecl, diag::overridden_near_match_here,
+                      matchDecl->getDescriptiveKind(),
+                      matchDecl->getFullName());
+          emittedMatchError = true;
+
+        } else if (mayHaveMismatchedOptionals) {
           emittedMatchError |=
               diagnoseMismatchedOptionals(TC, subscript,
                                           subscript->getIndices(),
@@ -5174,6 +5261,7 @@ public:
                                      &TC)) {
           TC.diagnose(property, diag::override_property_type_mismatch,
                       property->getName(), propertyTy, parentPropertyTy);
+          noteFixableMismatchedTypes(TC, decl, matchDecl);
           TC.diagnose(matchDecl, diag::property_override_here);
           return true;
         }
@@ -6462,7 +6550,7 @@ void TypeChecker::validateDecl(ValueDecl *D, bool resolveTypeParams) {
       // If we're already validating the type declaration's generic signature,
       // avoid a potential infinite loop by not re-validating the generic
       // parameter list.
-      if (!typeAlias->IsValidatingGenericSignature()) {
+      if (!typeAlias->isValidatingGenericSignature()) {
         revertGenericParamList(gp);
         
         auto builder = createArchetypeBuilder(typeAlias->getModuleContext());
@@ -6500,7 +6588,7 @@ void TypeChecker::validateDecl(ValueDecl *D, bool resolveTypeParams) {
       // If we're already validating the type declaration's generic signature,
       // avoid a potential infinite loop by not re-validating the generic
       // parameter list.
-      if (!nominal->IsValidatingGenericSignature()) {
+      if (!nominal->isValidatingGenericSignature()) {
         revertGenericParamList(gp);
 
         ArchetypeBuilder builder =
@@ -7459,7 +7547,10 @@ void TypeChecker::addImplicitConstructors(NominalTypeDecl *decl) {
     }
 
     auto superclassTy = classDecl->getSuperclass();
-    for (auto memberResult : lookupConstructors(classDecl, superclassTy)) {
+    auto ctors = lookupConstructors(classDecl, superclassTy,
+                                    NameLookupFlags::IgnoreAccessibility);
+
+    for (auto memberResult : ctors) {
       auto member = memberResult.Decl;
 
       // Skip unavailable superclass initializers.
@@ -7507,12 +7598,23 @@ void TypeChecker::addImplicitConstructors(NominalTypeDecl *decl) {
              getInitializerParamType(superclassCtor)).second)
         continue;
 
+      // If we're inheriting initializers, create an override delegating
+      // to 'super.init'. Otherwise, create a stub which traps at runtime.
+      auto kind = canInheritInitializers
+                    ? DesignatedInitKind::Chaining
+                    : DesignatedInitKind::Stub;
+
+      // If the superclass initializer is not accessible from the derived
+      // class, we cannot chain to 'super.init' either -- create a stub.
+      if (!superclassCtor->isAccessibleFrom(classDecl)) {
+        assert(!superclassCtor->isRequired() &&
+               "required initializer less visible than the class?");
+        kind = DesignatedInitKind::Stub;
+      }
+
       // We have a designated initializer. Create an override of it.
       if (auto ctor = createDesignatedInitOverride(
-                        *this, classDecl, superclassCtor,
-                        canInheritInitializers
-                          ? DesignatedInitKind::Chaining
-                          : DesignatedInitKind::Stub)) {
+                        *this, classDecl, superclassCtor, kind)) {
         classDecl->addMember(ctor);
       }
     }

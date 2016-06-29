@@ -513,6 +513,59 @@ public:
   llvm::DenseMap<AnyFunctionRef, std::vector<Expr*>> LocalCFunctionPointers;
 
 private:
+  /// Return statements with functions as return values.
+  llvm::DenseMap<AbstractFunctionDecl *, llvm::DenseSet<ReturnStmt *>>
+    FunctionAsReturnValue;
+
+  /// Function apply expressions with a certain function as an argument.
+  llvm::DenseMap<AbstractFunctionDecl *, llvm::DenseSet<ApplyExpr *>>
+    FunctionAsEscapingArg;
+
+public:
+  /// Record an occurrence of a function that captures inout values as an
+  /// argument.
+  ///
+  /// \param decl the function that occurs as an argument.
+  ///
+  /// \param apply the expression in which the function appears.
+  void addEscapingFunctionAsArgument(AbstractFunctionDecl *decl,
+                                     ApplyExpr *apply) {
+    FunctionAsEscapingArg[decl].insert(apply);
+  }
+
+  /// Find occurrences of a function that captures inout values as arguments.
+  ///
+  /// \param decl the function that occurs as an argument.
+  ///
+  /// \returns Expressions in which the function appears as arguments.
+  llvm::DenseSet<ApplyExpr *> &
+  getEscapingFunctionAsArgument(AbstractFunctionDecl *decl) {
+    return FunctionAsEscapingArg[decl];
+  }
+
+  /// Record an occurrence of  a function that captures inout values as a return
+  /// value
+  ///
+  /// \param decl the function that occurs as a return value.
+  ///
+  /// \param stmt the expression in which the function appears.
+  void addEscapingFunctionAsReturnValue(AbstractFunctionDecl *decl,
+                                        ReturnStmt *stmt) {
+    FunctionAsReturnValue[decl].insert(stmt);
+  }
+
+  /// Find occurrences of a function that captures inout values as return
+  /// values.
+  ///
+  /// \param decl the function that occurs as a return value.
+  ///
+  /// \returns Expressions in which the function appears as arguments.
+  llvm::DenseSet<ReturnStmt *> &
+  getEscapingFunctionAsReturnValue(AbstractFunctionDecl *decl) {
+    return FunctionAsReturnValue[decl];
+  }
+
+private:
   Type IntLiteralType;
   Type FloatLiteralType;
   Type BooleanLiteralType;
@@ -1778,8 +1831,7 @@ public:
   /// Checks an "ignored" expression to see if it's okay for it to be ignored.
   ///
   /// An ignored expression is one that is not nested within a larger
-  /// expression or statement. The warning from the \@warn_unused_result
-  /// attribute is produced here.
+  /// expression or statement.
   void checkIgnoredExpr(Expr *E);
 
   // Emits a diagnostic, if necessary, for a reference to a declaration

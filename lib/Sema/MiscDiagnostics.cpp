@@ -102,6 +102,9 @@ static void diagSyntacticUseRestrictions(TypeChecker &TC, const Expr *E,
     /// Keep track of InOutExprs
     SmallPtrSet<InOutExpr*, 2> AcceptableInOutExprs;
 
+    /// Keep track of the arguments to CallExprs.
+    SmallPtrSet<Expr *, 2> CallArgs;
+
     bool IsExprStmt;
 
   public:
@@ -223,6 +226,11 @@ static void diagSyntacticUseRestrictions(TypeChecker &TC, const Expr *E,
       auto Base = E;
       while (auto Conv = dyn_cast<ImplicitConversionExpr>(Base))
         Base = Conv->getSubExpr();
+
+      // Record call arguments.
+      if (auto Call = dyn_cast<CallExpr>(Base)) {
+        CallArgs.insert(Call->getArg());
+      }
 
       if (auto *DRE = dyn_cast<DeclRefExpr>(Base)) {
         // Verify metatype uses.
@@ -485,6 +493,14 @@ static void diagSyntacticUseRestrictions(TypeChecker &TC, const Expr *E,
             isa<OpenExistentialExpr>(ParentExpr)) {
           return;
         }
+
+        // FIXME: As a specific hack, we white-list parenthesized
+        // expressions that are call arguments.  This allows some
+        // ill-formed code to omit ".self" due to a historical bug. We
+        // keep that code working until we have a decision on SE-0090,
+        // rather than potentially breaking code twice.
+        if (isa<ParenExpr>(ParentExpr) && CallArgs.count(ParentExpr) > 0)
+          return;
       }
 
       // Is this a protocol metatype?
@@ -997,6 +1013,111 @@ bool swift::diagnoseArgumentLabelError(TypeChecker &TC, const Expr *expr,
   return true;
 }
 
+bool swift::fixItOverrideDeclarationTypes(TypeChecker &TC,
+                                          InFlightDiagnostic &diag,
+                                          ValueDecl *decl,
+                                          const ValueDecl *base) {
+  // For now, just rewrite cases where the base uses a value type and the
+  // override uses a reference type, and the value type is bridged to the
+  // reference type. This is a way to migrate code that makes use of types
+  // that previously were not bridged to value types.
+  auto checkType = [&](Type overrideTy, Type baseTy,
+                       SourceRange typeRange) -> bool {
+    if (typeRange.isInvalid())
+      return false;
+
+    auto normalizeType = [](Type ty) -> Type {
+      ty = ty->getInOutObjectType();
+      if (Type unwrappedTy = ty->getAnyOptionalObjectType())
+        ty = unwrappedTy;
+      return ty;
+    };
+
+    // Is the base type bridged?
+    Type normalizedBaseTy = normalizeType(baseTy);
+    const DeclContext *DC = decl->getDeclContext();
+    Optional<Type> maybeBridged =
+        TC.Context.getBridgedToObjC(DC, normalizedBaseTy, &TC);
+
+    // ...and just knowing that it's bridged isn't good enough if we don't
+    // know what it's bridged /to/. Also, don't do this check for trivial
+    // bridging---that doesn't count.
+    Type bridged = maybeBridged.getValueOr(Type());
+    if (!bridged || bridged->isEqual(normalizedBaseTy))
+      return false;
+
+    // ...and is it bridged to the overridden type?
+    Type normalizedOverrideTy = normalizeType(overrideTy);
+    if (!bridged->isEqual(normalizedOverrideTy)) {
+      // If both are nominal types, check again, ignoring generic arguments.
+      auto *overrideNominal = normalizedOverrideTy->getAnyNominal();
+      if (!overrideNominal || bridged->getAnyNominal() != overrideNominal) {
+        return false;
+      }
+    }
+
+    Type newOverrideTy = baseTy;
+
+    // Preserve optionality if we're dealing with a simple type.
+    OptionalTypeKind OTK;
+    if (Type unwrappedTy = newOverrideTy->getAnyOptionalObjectType())
+      newOverrideTy = unwrappedTy;
+    if (overrideTy->getAnyOptionalObjectType(OTK))
+      newOverrideTy = OptionalType::get(OTK, newOverrideTy);
+
+    SmallString<32> baseTypeBuf;
+    llvm::raw_svector_ostream baseTypeStr(baseTypeBuf);
+    PrintOptions options;
+    options.SynthesizeSugarOnTypes = true;
+
+    newOverrideTy->print(baseTypeStr, options);
+    diag.fixItReplace(typeRange, baseTypeStr.str());
+    return true;
+  };
+
+  if (auto *var = dyn_cast<VarDecl>(decl)) {
+    SourceRange typeRange = var->getTypeSourceRangeForDiagnostics();
+    return checkType(var->getType(), base->getType(), typeRange);
+  }
+
+  if (auto *fn = dyn_cast<AbstractFunctionDecl>(decl)) {
+    auto *baseFn = cast<AbstractFunctionDecl>(base);
+    bool fixedAny = false;
+    if (fn->getParameterLists().back()->size() ==
+        baseFn->getParameterLists().back()->size()) {
+      for_each(*fn->getParameterLists().back(),
+               *baseFn->getParameterLists().back(),
+               [&](ParamDecl *param, const ParamDecl *baseParam) {
+        fixedAny |= fixItOverrideDeclarationTypes(TC, diag, param, baseParam);
+      });
+    }
+    if (auto *method = dyn_cast<FuncDecl>(decl)) {
+      auto *baseMethod = cast<FuncDecl>(base);
+      fixedAny |= checkType(method->getBodyResultType(),
+                            baseMethod->getResultType(),
+                            method->getBodyResultTypeLoc().getSourceRange());
+    }
+    return fixedAny;
+  }
+
+  if (auto *subscript = dyn_cast<SubscriptDecl>(decl)) {
+    auto *baseSubscript = cast<SubscriptDecl>(base);
+    bool fixedAny = false;
+    for_each(*subscript->getIndices(),
+             *baseSubscript->getIndices(),
+             [&](ParamDecl *param, const ParamDecl *baseParam) {
+      fixedAny |= fixItOverrideDeclarationTypes(TC, diag, param, baseParam);
+    });
+    fixedAny |= checkType(subscript->getElementType(),
+                          baseSubscript->getElementType(),
+                          subscript->getElementTypeLoc().getSourceRange());
+    return fixedAny;
+  }
+
+  llvm_unreachable("unknown overridable member");
+}
+
+
 
 //===----------------------------------------------------------------------===//
 // Diagnose availability.
@@ -1455,6 +1576,10 @@ bool TypeChecker::diagnoseExplicitUnavailability(
   case UnconditionalAvailabilityKind::None:
   case UnconditionalAvailabilityKind::Unavailable:
   case UnconditionalAvailabilityKind::UnavailableInCurrentSwift:
+  case UnconditionalAvailabilityKind::UnavailableInSwift: {
+    bool inSwift = (Attr->getUnconditionalAvailability() ==
+                    UnconditionalAvailabilityKind::UnavailableInSwift);
+
     if (!Attr->Rename.empty()) {
       SmallString<32> newNameBuf;
       Optional<ReplacementDeclKind> replaceKind =
@@ -1469,31 +1594,24 @@ bool TypeChecker::diagnoseExplicitUnavailability(
                              newName);
         attachRenameFixIts(diag);
       } else {
-        auto diag = diagnose(Loc,diag::availability_decl_unavailable_rename_msg,
+        auto diag = diagnose(Loc, diag::availability_decl_unavailable_rename_msg,
                              Name, replaceKind.hasValue(), rawReplaceKind,
                              newName, Attr->Message);
         attachRenameFixIts(diag);
       }
     } else if (Attr->Message.empty()) {
-      diagnose(Loc, diag::availability_decl_unavailable, Name).highlight(R);
+      diagnose(Loc, inSwift ? diag::availability_decl_unavailable_in_swift
+                            : diag::availability_decl_unavailable,
+               Name).highlight(R);
     } else {
       EncodedDiagnosticMessage EncodedMessage(Attr->Message);
-      diagnose(Loc, diag::availability_decl_unavailable_msg, Name,
-               EncodedMessage.Message)
+      diagnose(Loc, inSwift ? diag::availability_decl_unavailable_in_swift_msg
+                            : diag::availability_decl_unavailable_msg,
+               Name, EncodedMessage.Message)
         .highlight(R);
     }
     break;
-
-  case UnconditionalAvailabilityKind::UnavailableInSwift:
-    if (Attr->Message.empty()) {
-      diagnose(Loc, diag::availability_decl_unavailable_in_swift, Name)
-        .highlight(R);
-    } else {
-      EncodedDiagnosticMessage EncodedMessage(Attr->Message);
-      diagnose(Loc, diag::availability_decl_unavailable_in_swift_msg, Name,
-                  EncodedMessage.Message).highlight(R);
-    }
-    break;
+  }
   }
 
   auto MinVersion = Context.LangOpts.getMinPlatformVersion();

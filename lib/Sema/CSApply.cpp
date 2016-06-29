@@ -1422,7 +1422,7 @@ namespace {
 
       // Add substitution for the dependent type T._ObjectiveCType.
       if (conformsToBridgedToObjectiveC) {
-        auto objcTypeId = tc.Context.getIdentifier("_ObjectiveCType");
+        auto objcTypeId = tc.Context.Id_ObjectiveCType;
         auto objcAssocType = cast<AssociatedTypeDecl>(
                                conformance->getProtocol()->lookupDirect(
                                  objcTypeId).front());
@@ -3857,7 +3857,7 @@ shouldApplyAddingLabelFixit(TuplePattern *tuplePattern, TupleType *fromTuple,
     if (curFrom->getElements().size() != n ||
         curTo->getElements().size() != n)
       return false;
-    for (unsigned i = 0; i < n; i ++) {
+    for (unsigned i = 0; i < n; i++) {
       Pattern* subPat = curPattern->getElement(i).getPattern();
       const TupleTypeElt &subFrom = curFrom->getElement(i);
       const TupleTypeElt &subTo = curTo->getElement(i);
@@ -5827,6 +5827,42 @@ Expr *ExprRewriter::finishApply(ApplyExpr *apply, Type openedType,
                                     covariantResultType);
     }
 
+    // Extract all arguments.
+    auto *CEA = arg;
+    if (auto *TSE = dyn_cast<TupleShuffleExpr>(CEA))
+      CEA = TSE->getSubExpr();
+    // The argument is either a ParenExpr or TupleExpr.
+    ArrayRef<Expr *> arguments;
+    ArrayRef<TypeBase *> types;
+
+    if (auto *TE = dyn_cast<TupleExpr>(CEA))
+      arguments = TE->getElements();
+    else if (auto *PE = dyn_cast<ParenExpr>(CEA))
+      arguments = PE->getSubExpr();
+    else
+      arguments = apply->getArg();
+
+    for (auto arg: arguments) {
+      bool isNoEscape = false;
+      while (1) {
+        if (auto AFT = arg->getType()->getAs<AnyFunctionType>()) {
+          isNoEscape = isNoEscape || AFT->isNoEscape();
+        }
+
+        if (auto conv = dyn_cast<ImplicitConversionExpr>(arg))
+          arg = conv->getSubExpr();
+        else if (auto *PE = dyn_cast<ParenExpr>(arg))
+          arg = PE->getSubExpr();
+        else
+          break;
+      }
+      if (!isNoEscape) {
+        if (auto DRE = dyn_cast<DeclRefExpr>(arg))
+          if (auto FD = dyn_cast<FuncDecl>(DRE->getDecl())) {
+            tc.addEscapingFunctionAsArgument(FD, apply);
+          }
+      }
+    }
     return result;
   }
 

@@ -9,11 +9,10 @@
 # See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 
 import os
+import platform
 import sys
-import subprocess
 import tempfile
 import unittest
-import platform
 try:
     from StringIO import StringIO
 except ImportError:
@@ -51,7 +50,7 @@ class TarTestCase(unittest.TestCase):
                          expect.format(dest=destination, source=source))
 
     def test_tar_nonexistent_file_raises(self):
-        with self.assertRaises(subprocess.CalledProcessError):
+        with self.assertRaises(SystemExit):
             tar(source='/path/to/something/that/surely/doesnt/exist',
                 destination='/another/path/that/shouldnt/exist')
 

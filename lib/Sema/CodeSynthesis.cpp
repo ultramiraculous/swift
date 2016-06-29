@@ -1304,7 +1304,9 @@ void TypeChecker::completePropertyBehaviorParameter(VarDecl *VD,
   auto ParameterTy = BehaviorParameter->getInterfaceType()
     ->castTo<AnyFunctionType>()
     ->getResult();
-  
+
+  GenericSignature *genericSig = nullptr;
+
   TypeSubstitutionMap interfaceMap = sig->getSubstitutionMap(SelfInterfaceSubs);
   auto SubstInterfaceTy = ParameterTy.subst(VD->getModuleContext(),
                                             interfaceMap, SubstOptions());
@@ -1321,7 +1323,7 @@ void TypeChecker::completePropertyBehaviorParameter(VarDecl *VD,
   // Add the Self type back to the interface and context types.
   if (DC->isTypeContext()) {
     if (DC->isGenericContext()) {
-      auto genericSig = DC->getGenericSignatureOfContext();
+      genericSig = DC->getGenericSignatureOfContext();
       SubstInterfaceTy = GenericFunctionType::get(genericSig,
                                                   DC->getSelfInterfaceType(),
                                                   SubstInterfaceTy,
@@ -1398,6 +1400,8 @@ void TypeChecker::completePropertyBehaviorParameter(VarDecl *VD,
                      TypeLoc::withoutLoc(SubstBodyResultTy), DC);
 
   Parameter->setInterfaceType(SubstInterfaceTy);
+  Parameter->setGenericSignature(genericSig);
+
   // Mark the method to be final, implicit, and private.  In a class, this
   // prevents it from being dynamically dispatched.
   if (DC->getAsClassOrClassExtensionContext())
@@ -2044,6 +2048,21 @@ swift::createDesignatedInitOverride(TypeChecker &tc,
   if (superclassCtor->getGenericParams())
     return nullptr;
 
+  // Lookup will sometimes give us initializers that are from the ancestors of
+  // our immediate superclass.  So, from the superclass constructor, we look 
+  // one level up to the enclosing type context which will either be a class 
+  // or an extension.  We can use the type declared in that context to check
+  // if it's our immediate superclass and give up if we didn't.
+  // 
+  // FIXME: Remove this when lookup of initializers becomes restricted to our
+  // immediate superclass.
+  Type superclassTyInCtor = superclassCtor->getDeclContext()->getDeclaredTypeInContext();
+  Type superclassTy = classDecl->getSuperclass();
+  NominalTypeDecl *superclassDecl = superclassTy->getAnyNominal();
+  if (superclassTyInCtor->getAnyNominal() != superclassDecl) {
+    return nullptr;
+  }
+
   // Determine the initializer parameters.
   auto &ctx = tc.Context;
 
@@ -2060,8 +2079,6 @@ swift::createDesignatedInitOverride(TypeChecker &tc,
   //
   // We might have to apply substitutions, if for example we have a declaration
   // like 'class A : B<Int>'.
-  auto superclassTy = classDecl->getSuperclass();
-  auto *superclassDecl = superclassTy->getAnyNominal();
   if (superclassDecl->isGenericTypeContext()) {
     if (auto *superclassSig = superclassDecl->getGenericSignatureOfContext()) {
       auto *moduleDecl = classDecl->getParentModule();
@@ -2138,7 +2155,7 @@ swift::createDesignatedInitOverride(TypeChecker &tc,
 
   // Wire up the overrides.
   ctor->getAttrs().add(new (tc.Context) OverrideAttr(/*Implicit=*/true));
-  checkOverrides(tc, ctor);
+  ctor->setOverriddenDecl(superclassCtor);
 
   if (kind == DesignatedInitKind::Stub) {
     // Make this a stub implementation.

@@ -28,7 +28,6 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
-#include <unistd.h>
 #include "../SwiftShims/RuntimeShims.h"
 #if SWIFT_OBJC_INTEROP
 # include <objc/NSObject.h>

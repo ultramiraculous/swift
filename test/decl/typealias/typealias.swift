@@ -1,4 +1,4 @@
-// RUN: %target-parse-verify-swift
+// RUN: %target-parse-verify-swift -enable-protocol-typealiases
 
 typealias rgb = Int32 // expected-note {{declared here}}
 var rgb : rgb? // expected-error {{invalid redeclaration of 'rgb'}}
@@ -29,7 +29,6 @@ struct MyType<TyA, TyB> {
 
 protocol P {
   associatedtype X<T>  // expected-error {{associated types may not have a generic parameter list}}
-  
   typealias Y<T>       // expected-error {{expected '=' in typealias declaration}}
 }
 
@@ -47,6 +46,9 @@ typealias BadC<T,T> = MyType<String, T>  // expected-error {{definition conflict
 // expected-note @-1 {{previous definition of 'T' is here}}
 
 typealias Tuple2<T1, T2> = (T1, T2)
+
+typealias Tuple3<T1> = (T1, T1) where T1 : Hashable
+
 
 let _ : Tuple2<Int, String> = (1, "foo")
 let _ : Tuple2 = (1, "foo")
@@ -147,7 +149,7 @@ extension C<T> {}  // expected-error {{use of undeclared type 'T'}}
 extension C<Int> {}  // expected-error {{constrained extension must be declared on the unspecialized generic type 'MyType' with constraints specified by a 'where' clause}}
 
 
-// Allow typealias inside protocol, but don't allow it in where clauses (at least not yet)
+// Allow typealias inside protocol
 protocol Col {
   associatedtype Elem
   var elem: Elem { get }
@@ -244,6 +246,19 @@ protocol P4 {
   typealias Y = Self.Y // expected-error {{type alias 'Y' circularly references itself}}
   
   func getSelf() -> X
+}
+
+// Availability of typealiases in protocols for nested type lookup
+protocol P5 {
+  associatedtype A
+  typealias T1 = Int
+  typealias T2 = A
+  var a: T2 { get }
+}
+
+struct T5 : P5 {
+  var a: P5.T1 // OK
+  var v2: P5.T2 // expected-error {{cannot use typealias 'T2' of associated type 'A' outside of its protocol}}
 }
 
 
