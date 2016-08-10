@@ -14,6 +14,9 @@ import StdlibUnittest
 from SwiftFloatingPointTypes import all_floating_point_types
 }%
 
+var FixedPointConversionTraps = TestSuite("FixedPointToFloatingPointConversionTraps")
+var FixedPointConversionFailures = TestSuite("FixedPointToFloatingPointConversionFailures")
+
 var FloatingPointConversionTruncations = TestSuite("FloatingPointToFloatingPointConversionTruncations")
 var FloatingPointConversionFailures = TestSuite("FloatingPointToFloatingPointConversionFailures")
 
@@ -110,6 +113,138 @@ FloatingPointConversionFailures.test("${OtherFloat}To${Self}Conversion/AlwaysSuc
 %   end
 
 %  end # for in all_floating_point_types (Other)
+
+%{
+
+float_to_int_conversion_template = gyb.parse_template("float_to_int_conversion",
+"""
+% for int_ty in all_integer_types(word_bits):
+%  OtherInt = int_ty.stdlib_name
+
+FixedPointConversionTraps.test("${Self}/${OtherInt}/+inf")
+  .crashOutputMatches(getInfiniteOrNaNMessage("${Self}")).code {
+  do {
+    var a = get${OtherInt}(${OtherInt}(get${Self}(0.0)))
+    expectEqual(0, a)
+  }
+  do {
+    var a = get${OtherInt}(${OtherInt}(get${Self}(123.0)))
+    expectEqual(123, a)
+  }
+
+  expectCrashLater()
+  _blackHole(get${OtherInt}(${OtherInt}(get${Self}(+${Self}.infinity))))
+}
+
+FixedPointConversionFailures.test("${Self}/${OtherInt}/+inf") {
+  do {
+    var a = (${OtherInt}(exactly: get${Self}(0.0)))
+    expectEqual(0, a)
+  }
+  do {
+    var a = (${OtherInt}(exactly: get${Self}(123.0)))
+    expectEqual(123, a)
+  }
+  do {
+    let a = (${OtherInt}(exactly: get${Self}(+${Self}.infinity)))
+    expectEqual(nil, a)
+  }
+}
+
+%   if int_ty.is_signed:
+
+FixedPointConversionTraps.test("${Self}/${OtherInt}/-inf")
+  .crashOutputMatches(getInfiniteOrNaNMessage("${Self}")).code {
+  do {
+    var a = get${OtherInt}(${OtherInt}(get${Self}(-0.0)))
+    expectEqual(0, a)
+  }
+  do {
+    var a = get${OtherInt}(${OtherInt}(get${Self}(-123.0)))
+    expectEqual(-123, a)
+  }
+
+  expectCrashLater()
+  _blackHole(get${OtherInt}(${OtherInt}(get${Self}(-${Self}.infinity))))
+}
+
+FixedPointConversionFailures.test("${Self}/${OtherInt}/-inf") {
+  do {
+    var a = (${OtherInt}(exactly: get${Self}(-0.0)))
+    expectEqual(0, a)
+  }
+  do {
+    var a = (${OtherInt}(exactly: get${Self}(-123.0)))
+    expectEqual(-123, a)
+  }
+  do {
+    var a = (${OtherInt}(exactly: get${Self}(-123.0)))
+    expectEqual(nil, a)
+  }
+}
+
+%   else:
+
+FixedPointConversionTraps.test("${Self}/${OtherInt}/negative")
+  .crashOutputMatches(getTooSmallMessage()).code {
+  expectCrashLater()
+  _blackHole(get${OtherInt}(${OtherInt}(get${Self}(-123.0))))
+}
+
+FixedPointConversionFailures.test("${Self}/${OtherInt}/negative") {
+  let a = (${OtherInt}(exactly: get${Self}(-123.0)))
+  expectEqual(nil, a)
+}
+
+FixedPointConversionTraps.test("${Self}/${OtherInt}/-inf")
+  .crashOutputMatches(getInfiniteOrNaNMessage("${Self}")).code {
+  expectCrashLater()
+  _blackHole(get${OtherInt}(${OtherInt}(get${Self}(-${Self}.infinity))))
+}
+
+FixedPointConversionFailures.test("${Self}/${OtherInt}/-inf") {
+  let a = (${OtherInt}(exactly: get${Self}(-${Self}.infinity)))
+  expectEqual(nil, a)
+}
+
+%   end
+
+FixedPointConversionTraps.test("${Self}/${OtherInt}/NaN")
+  .crashOutputMatches(getInfiniteOrNaNMessage("${Self}")).code {
+  expectCrashLater()
+  _blackHole(get${OtherInt}(${OtherInt}(get${Self}(${Self}.nan))))
+}
+
+FixedPointConversionFailures.test("${Self}/${OtherInt}/NaN") {
+  let a = (${OtherInt}(exactly: get${Self}(${Self}.nan)))
+  expectEqual(nil, a)
+}
+
+%  end # for in all_integer_types (Other)
+""")
+}%
+
+#if arch(i386) || arch(arm)
+
+  ${gyb.execute_template(
+      float_to_int_conversion_template,
+      word_bits=32,
+      **locals()
+      )}
+
+#elseif arch(x86_64) || arch(arm64) || arch(powerpc64) || arch(powerpc64le) || arch(s390x)
+
+  ${gyb.execute_template(
+      float_to_int_conversion_template,
+      word_bits=64,
+      **locals()
+      )}
+
+#else
+
+_UnimplementedError()
+
+#endif
 
 %  if Self == 'Float80':
 #endif
