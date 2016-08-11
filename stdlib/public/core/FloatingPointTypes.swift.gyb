@@ -840,6 +840,20 @@ extension ${Self} {
     _value = Builtin.${sign}itofp_${ThatBuiltinName}_FPIEEE${bits}(v._value)
   }
 % end
+
+% if srcBits < SignificandBitCount:
+  @available(*, message: "Converting ${That} to ${Self} will always succeed.")
+% end
+  @inline(__always)
+  public init?(exactly v: ${That}) {
+    _value = Builtin.${sign}itofp_${ThatBuiltinName}_FPIEEE${bits}(v._value)
+
+% if srcBits < SignificandBitCount:
+    ${That}(self) != value {
+      return nil
+    }
+% end
+  }
 }
 
 // Construction from other floating point numbers.
