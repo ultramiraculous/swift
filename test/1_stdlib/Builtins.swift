@@ -30,7 +30,7 @@ class X {}
 
 tests.test("_isUnique/NativeObject") {
   var a: Builtin.NativeObject = Builtin.castToNativeObject(X())
-  expectNotEqual(false, _isUnique_native(&a))
+  expectEqual(false, _isUnique_native(&a))
   var b = a
   expectFalse(_isUnique_native(&a))
   expectFalse(_isUnique_native(&b))

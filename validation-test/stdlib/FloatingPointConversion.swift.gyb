@@ -11,8 +11,13 @@
 import StdlibUnittest
 
 %{
-from SwiftFloatingPointTypes import all_floating_point_types
+import gyb
+from SwiftFloatingPointTypes import all_floating_point_types, getFtoIBounds
+from SwiftIntTypes import all_integer_types
 }%
+
+var FixedPointConversionTraps = TestSuite("FixedPointToFloatingPointConversionTraps")
+var FixedPointConversionFailures = TestSuite("FixedPointToFloatingPointConversionFailures")
 
 var FloatingPointConversionTruncations = TestSuite("FloatingPointToFloatingPointConversionTruncations")
 var FloatingPointConversionFailures = TestSuite("FloatingPointToFloatingPointConversionFailures")
@@ -110,6 +115,54 @@ FloatingPointConversionFailures.test("${OtherFloat}To${Self}Conversion/AlwaysSuc
 %   end
 
 %  end # for in all_floating_point_types (Other)
+
+%{
+
+float_to_int_conversion_template = gyb.parse_template("float_to_int_conversion",
+"""
+% for int_ty in all_integer_types(word_bits):
+%  OtherInt = int_ty.stdlib_name
+%  OtherMin = int_ty.min
+%  OtherMax = int_ty.max
+%  (FloatMin, FloatMax) = getFtoIBounds(self_type.bits, int_ty.bits, int_ty.is_signed)
+
+%   if int_ty.is_signed:
+
+FixedPointConversionFailures.test("${OtherInt}/${Self}/negativeMax") {
+
+}
+
+%   end
+
+FixedPointConversionFailures.test("${OtherInt}/${Self}/positiveMax") {
+
+}
+
+%  end # for in all_integer_types (Other)
+""")
+}%
+
+#if arch(i386) || arch(arm)
+
+  ${gyb.execute_template(
+      float_to_int_conversion_template,
+      word_bits=32,
+      **locals()
+      )}
+
+#elseif arch(x86_64) || arch(arm64) || arch(powerpc64) || arch(powerpc64le) || arch(s390x)
+
+  ${gyb.execute_template(
+      float_to_int_conversion_template,
+      word_bits=64,
+      **locals()
+      )}
+
+#else
+
+_UnimplementedError()
+
+#endif
 
 %  if Self == 'Float80':
 #endif
