@@ -3,7 +3,7 @@
 // RUN: %target-swift-frontend -emit-module -o %t -I %t %S/Inputs/outer.swift
 // RUN: %target-swift-frontend -typecheck %s -I %t -sdk "" -verify
 
-// case where just importing `struct inner.Inner1` is the most specific way to do imports
+// case where just importing `struct inner.Inner1` is the most succinct way to do imports
 // outer is redundant because none of its contents are used, but it provides `inner`
 // specific import `inner.Inner1` is redundant because multple things in `inner` are used
 
