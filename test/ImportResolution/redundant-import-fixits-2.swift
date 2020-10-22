@@ -13,3 +13,4 @@ import struct inner.Inner1 // expected-error {{Redundant import}} {{0-27=}}
 
 let _ = Inner1()
 let _ = Inner2() 
+let _ = Inner1() // Duplicate this useage to verify that duplicate uses do not influence the "utility" of a given import

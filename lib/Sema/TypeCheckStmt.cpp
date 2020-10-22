@@ -1820,7 +1820,7 @@ bool TypeCheckASTNodeAtLocRequest::evaluate(Evaluator &evaluator,
                                             SourceLoc Loc) const {
   auto &ctx = DC->getASTContext();
   assert(DiagnosticSuppression::isEnabled(ctx.Diags) &&
-         "Diagnosing and Single ASTNode type checknig don't mix");
+         "Diagnosing and Single ASTNode type checking don't mix");
 
   // Find innermost ASTNode at Loc from DC. Results the reference to the found
   // ASTNode and the decl context of it.
