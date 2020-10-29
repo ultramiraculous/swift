@@ -5,3 +5,9 @@
 // Tests that `asdf` is flagged for not being used
 
 import asdf // expected-error {{Unused import}} {{0-12=}}
+
+// Verify the unused diagnostic takes prescidence over the dublication check.
+import asdf // expected-error {{Unused import}} {{0-12=}}
+
+// Verify the unused diagnostic takes prescidence over the testability usage check.
+@testable import asdf // expected-error {{Unused import}} {{0-12=}}
