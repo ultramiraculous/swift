@@ -1300,6 +1300,7 @@ static Type resolveTopLevelIdentTypeComponent(TypeResolution resolution,
   const auto options = resolution.getOptions();
   ASTContext &ctx = resolution.getASTContext();
   auto &diags = ctx.Diags;
+    
 
   // Short-circuiting.
   if (comp->isInvalid()) return ErrorType::get(ctx);

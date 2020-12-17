@@ -2422,6 +2422,45 @@ public:
   bool isCached() const { return true; }
 };
 
+/*
+class ProvidableByImportRequest
+    : public SimpleRequest<ProvidableByImportRequest,
+                           bool,
+                           RequestFlags::Cached> {
+public:
+  using SimpleRequest::SimpleRequest;
+
+private:
+  friend SimpleRequest;
+
+  bool
+  evaluate(Evaluator &evaluator, AttributedImport<ImportedModule> *import, ValueDecl *decl) const;
+
+public:
+  // Cached.
+  bool isCached() const { return true; }
+};
+
+class ImportUtilizationReportRequest
+    : public SimpleRequest<ImportUtilizationReportRequest,
+                           ArrayRef<ValueDecl *>(ImportDecl *),
+                           RequestFlags::Cached> {
+public:
+  using SimpleRequest::SimpleRequest;
+
+private:
+  friend SimpleRequest;
+
+  ArrayRef<ValueDecl *>
+  evaluate(Evaluator &evaluator, SourceFile *sourceFile) const;
+
+public:
+  // Cached.
+  bool isCached() const { return true; }
+};
+
+*/
+
 /// Looks up the decls that a scoped import references, ensuring the import is
 /// valid.
 ///

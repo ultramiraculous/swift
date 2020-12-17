@@ -30,6 +30,7 @@ add_swift_host_library(swiftSema STATIC
   DerivedConformanceRawRepresentable.cpp
   DerivedConformances.cpp
   ImportResolution.cpp
+  ImportUtilizationDiagnostics.cpp
   InstrumenterSupport.cpp
   LookupVisibleDecls.cpp
   MiscDiagnostics.cpp

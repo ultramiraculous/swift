@@ -509,6 +509,117 @@ bool DependencyVerifier::diagnoseUnfulfilledObligations(
 
   return false;
 }
+// bool DependencyVerifier::moduleProvidesReference(const ModuleDecl *module, const DependencyCollector::Reference &ref) {
+
+//   LookupInModuleRequest
+//   if (SF)
+  
+// }
+
+/*
+bool DependencyVerifier::importProvidesReference(const AttributedImport<ImportedModule> *import, const DependencyCollector::Reference &ref) {
+    auto &importedModule = import.module.module;
+    auto &referencedModule = reference.subject.getModuleContext();
+    auto &name = refernece.name;
+
+
+
+    if (importedModule == referencedModule) {
+      return true;
+    }
+
+    ModuleQualifiedLookupRequest
+    
+    
+    auto &addtl = importedModule.getImportedModules
+    for (auto &attlImport : import.)
+
+}
+*/
+
+/*
+void DependencyVerifier::analyzeImportUtilization(const SourceFile *SF) {
+  llvm::DenseMap<ImportPath::Access, DependencyCollector::ReferenceSet> referencesByAccessPath;
+
+  auto &Ctx = SF->getASTContext();
+  auto &importCache = Ctx->getImportCache();
+  Ctx.evaluator.enumerateReferencesInFile(SF, [&](const auto &reference) {
+    auto module = reference.subject.getModuleContext();
+
+    // Iterate through all access paths visible (from the top level or exported elsewhere) leading to the referenced module.
+    // Assume this lookup is *actually* cached and not exensive to look up for every reference in the file.
+    for (auto &path : importCache.getAllVisibleAccessPaths(module, dc)) {
+      
+      if (path.isScoped()) {
+        // check if path to module provides this specific nominal type
+        // ScopedImportLookupRequest?
+      } else {
+        referencesByAccessPath[path].insert(reference);
+      }
+
+    }
+  }
+
+  for (auto currentImport : SF.getImports()) {
+    bool importIsRedundant = false;
+    auto currentAccessPath = currentImport.accessPath();
+    auto currentProvidedReferences = referencesByAccessPath[currentAccessPath];
+    auto scopedReferencesForImport = currentProvidedReferences...butScoped
+    if (currentProvidedReferences.count == 0 {
+      //diag unused
+      continue;
+    }
+
+    for (auto otherImport : SF.getImports()) {
+        // Don't evaluate ourselves.
+        if (currentImport == otherImport) { continue };
+
+        auto theirAccessPath = otherImport.accessPath();
+        if (myAccessPath == theirAccessPath) {
+          if (otherImport.isExported() && !currentImport.isExported()) {
+            // other import is more relevant becuase it provides an export. Make a note.
+            continue;
+          }
+        }
+
+        auto theirProvidedReferences = referencesByAccessPath[theirAccessPath];
+    }
+
+  }
+
+
+
+}
+*/
+
+// std::set<Obligation> DependencyVerifier::obligationsPovidableByImport(AttributedImport<ImportedModule> *import, ObligationMap *obligationMap) {
+//   std::set<Obligation> provided;
+//   // for type in import
+//   // 
+
+//   forEachOwedObligation(obligationMap, [&](StringRef key, Obligation &obligation) {
+//     // assert(obligation.state == Fulfilled, "Obligation unexpectedly unfulfilled during analysis.")
+
+//   });
+//   return provided;
+// }
+
+// void DependencyVerifier::_analyzeImportUtilization(const *SF, std::vector<Expectation> dependencies) {
+//   for (auto importA : SF->getImports()) {
+//     auto currentBestFit = importA;
+//     auto currentCohort = ArrayRef<AttributedImport<ImportedModule>>(importA);
+//     auto &myUtility = obligationsPovidableByImport(importA, dependencies);
+//     if (myUtility.empty()) {
+//       // sema_unused_import
+//       continue;
+//     }
+
+//     for (auto importB : SF->getImports()) {
+//       if (importA == importB) { continue; }
+//       auto &theirUtility = obligationsPovidableByImport(importB, dependencies);
+//     }
+//   }
+// }
 
 bool DependencyVerifier::verifyFile(const SourceFile *SF) {
   std::vector<Expectation> ExpectedDependencies;
@@ -518,6 +629,7 @@ bool DependencyVerifier::verifyFile(const SourceFile *SF) {
 
   ObligationMap Obligations;
   if (constructObligations(SF, Obligations)) {
+    // analyzeImportUtilization(SF);
     return true;
   }
 

@@ -375,6 +375,9 @@ void evaluator::DependencyRecorder::realize(
   if (!source->isPrimary()) {
     return;
   }
+
+
+  
   fileReferences[source].insert(ref);
 }
 

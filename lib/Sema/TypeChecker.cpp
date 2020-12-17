@@ -49,6 +49,8 @@
 #include "llvm/ADT/Twine.h"
 #include <algorithm>
 
+#include "ImportUtilizationDiagnostics.h"
+
 using namespace swift;
 
 ProtocolDecl *TypeChecker::getProtocol(ASTContext &Context, SourceLoc loc,
@@ -278,6 +280,8 @@ void swift::performTypeChecking(SourceFile &SF) {
                                  TypeCheckSourceFileRequest{&SF}, {});
 }
 
+
+
 evaluator::SideEffect
 TypeCheckSourceFileRequest::evaluate(Evaluator &eval, SourceFile *SF) const {
   assert(SF && "Source file cannot be null!");
@@ -312,7 +316,9 @@ TypeCheckSourceFileRequest::evaluate(Evaluator &eval, SourceFile *SF) const {
         TypeChecker::typeCheckTopLevelCodeDecl(TLCD);
         TypeChecker::contextualizeTopLevelCode(TLCD);
       } else {
+//          D->dump();
         TypeChecker::typeCheckDecl(D);
+//          D->dump();
       }
     }
 
@@ -324,6 +330,8 @@ TypeCheckSourceFileRequest::evaluate(Evaluator &eval, SourceFile *SF) const {
       Ctx.evaluator,
       CheckInconsistentImplementationOnlyImportsRequest{SF->getParentModule()},
       {});
+    
+  analyzeImportUtilization(SF);
 
   // Perform various AST transforms we've been asked to perform.
   if (!Ctx.hadError() && Ctx.LangOpts.DebuggerTestingTransform)

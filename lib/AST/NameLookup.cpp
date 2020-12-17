@@ -414,6 +414,7 @@ static void recordShadowedDeclsAfterTypeMatch(
           continue;
         }
 
+          /// Lookups
         // We might be in a situation where neither module shadows the
         // other, but one declaration is visible via a scoped import.
         bool firstScoped = isScopedImport(firstPaths);

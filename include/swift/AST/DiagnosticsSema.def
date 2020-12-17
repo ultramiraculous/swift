@@ -716,6 +716,27 @@ WARNING(sema_import_current_module_with_file,none,
 ERROR(sema_opening_import,Fatal,
       "opening import file for module %0: %1", (Identifier, StringRef))
 
+
+WARNING(sema_unused_import,none, "Unused import", ())
+      
+WARNING(sema_redundant_import,none,
+      "Redundant import", ())
+NOTE(sema_edundant_import_prev_succinct,none,
+     "All used types from '%0' import are also provided by '%1'", (StringRef,StringRef))
+NOTE(sema_redundant_import_prev_succinct_exported,none,
+     "@_exported import of '%0' provides the same symbols as '%1'", (StringRef,StringRef))
+
+WARNING(sema_duplicate_import,none,
+      "Duplicate import", (StringRef))
+NOTE(sema_duplicate_import_prev_first,none,
+     "'%0' is first imported here", (StringRef))
+NOTE(sema_duplicate_import_addtl,none,
+     "'%0' is also imported here", (StringRef))
+
+WARNING(sema_unnecessarily_testable,none,
+      "Import of '%0' does not need to be @testable", (StringRef))
+
+
 ERROR(serialization_load_failed,Fatal,
       "failed to load module '%0'", (StringRef))
 ERROR(module_interface_build_failed,Fatal,
@@ -5584,3 +5605,5 @@ ERROR(atomics_ordering_must_be_constant, none,
 
 #define UNDEFINE_DIAGNOSTIC_MACROS
 #include "DefineDiagnosticMacros.h"
+
+
